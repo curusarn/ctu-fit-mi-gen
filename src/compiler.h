@@ -28,7 +28,7 @@ public:
         // check that the module's IR is well formed
         llvm::raw_os_ostream err(std::cerr);
         if (llvm::verifyModule(*c.m, & err)) {
-            c.m->dump();
+            c.m->print(llvm::outs(), nullptr);
             throw CompilerError("Invalid LLVM bitcode produced");
         }
 
@@ -57,7 +57,7 @@ protected:
                     c->variables[d->symbol] = Location::variable(gv);
                 }
                 else
-                    c->variables[d->symbol] = Location::variable(new llvm::AllocaInst(t_int, d->symbol.name(), bb));
+                    c->variables[d->symbol] = Location::variable(new llvm::AllocaInst(t_int, 0, d->symbol.name(), bb));
             } else  {
                 d->value->accept(this);
                 c->variables[d->symbol] = Location::constant(result);
@@ -93,7 +93,7 @@ protected:
             llvm::Value * v = args++;
             if (c->hasVariable(s))
                 throw CompilerError(STR("Redefinition of variable " << s), f);
-            llvm::AllocaInst * loc = new llvm::AllocaInst(t_int, s.name(), bb);
+            llvm::AllocaInst * loc = new llvm::AllocaInst(t_int, 0, s.name(), bb);
             c->variables[s] = Location::variable(loc);
             new llvm::StoreInst(v, loc, false, bb);
             // set names, just for debugging purposes
@@ -219,7 +219,40 @@ protected:
     }
 
     virtual void visit(ast::While * d) {
-        // TODO I am homework
+        // I was homework
+        // compile the condition
+        //d->condition->accept(this);
+        // create basic blocks for cycle body and continuation
+        //llvm::BasicBlock * cycleBody = llvm::BasicBlock::Create(context, "cycleBody", f);
+        //llvm::BasicBlock * next = llvm::BasicBlock::Create(context, "next", f);
+
+        //llvm::ICmpInst * cmp = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_NE, result, zero, "");
+        //llvm::BranchInst::Create(trueCase, falseCase, cmp, bb);
+
+        //bb = trueCase;
+        //s->trueCase->accept(this);
+        //trueCase = bb;
+        //llvm::Value * trueResult = result;
+        //if (trueCase != nullptr)
+        //    llvm::BranchInst::Create(next, bb);
+        //bb = falseCase;
+        //s->falseCase->accept(this);
+        //falseCase = bb;
+        //llvm::Value * falseResult = result;
+        //if (falseCase != nullptr)
+        //    llvm::BranchInst::Create(next, bb);
+        //bb = next;
+        //if (falseCase == nullptr and trueCase == nullptr) {
+        //    next->eraseFromParent();
+        //    result = nullptr;
+        //} else {
+        //    llvm::PHINode * phi = llvm::PHINode::Create(t_int, 2, "if_phi", bb);
+        //    if (trueCase != nullptr)
+        //        phi->addIncoming(trueResult, trueCase);
+        //    if (falseCase != nullptr)
+        //        phi->addIncoming(falseResult, falseCase);
+        //    result = phi;
+        //}
     }
 
     virtual void visit(ast::Return * r) {

@@ -41,7 +41,7 @@ int main(int argc, char const * argv[]) {
             ast::Printer::print(m);
         llvm::Function * f = Compiler::compile(m);
         if (verbose)
-            f->getParent()->dump();
+            f->getParent()->print(llvm::outs(), nullptr);
         if (emitir != nullptr) {
             std::error_code error;
             llvm::raw_fd_ostream o(emitir, error, llvm::sys::fs::OpenFlags::F_None);
