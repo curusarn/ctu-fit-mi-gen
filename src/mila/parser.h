@@ -1,0 +1,325 @@
+#ifndef MILA_PARSER_H
+#define MILA_PARSER_H
+
+#include <memory>
+
+#include "scanner.h"
+#include "ast.h"
+
+namespace mila {
+
+
+class ParserError : public Exception {
+public:
+    ParserError(Token::Type expected, Token const & got):
+        Exception(STR("Expected " << Token::typeToString(expected) << " but " << got << "found (line: " << got.line << ", col: " << got.col << ")")) {
+    }
+
+    ParserError(std::string const & expected, Token const & got):
+        Exception(STR("Expected " << expected << " but " << got << "found (line: " << got.line << ", col: " << got.col << ")")) {
+    }
+};
+
+
+class Parser {
+public:
+    static ast::Module * parse(Scanner & s) {
+        Parser p(s);
+        return p.parseModule();
+    }
+
+    static ast::Module * parse(Scanner && s) {
+        Parser p(s);
+        return p.parseModule();
+    }
+
+
+private:
+
+    Parser(Scanner & s):
+        s(s) {
+    }
+
+    Token const & top() {
+        return s.top();
+    }
+
+    Token const & pop() {
+        return s.pop();
+    }
+
+    Token const & pop(Token::Type t) {
+        if (top() != t)
+            throw ParserError(t, top());
+        return pop();
+    }
+
+    bool condPop(Token::Type t) {
+        if (top() != t)
+            return false;
+        pop();
+        return true;
+    }
+
+    void revert() {
+        s.revert();
+    }
+
+    /** module ::= { function } { declaration } block
+     */
+    ast::Module * parseModule() {
+        std::unique_ptr<ast::Functions> functions(parseFunctions());
+        std::unique_ptr<ast::Declarations> declarations(parseDeclarations());
+        return new ast::Module(top(), functions.release(), declarations.release(), parseBlock());
+    }
+
+    /** function ::= kwFunction ident '(' [ ident {, ident } ]')' statement
+     */
+
+    ast::Functions * parseFunctions() {
+        std::unique_ptr<ast::Functions> result(new ast::Functions(top()));
+        while (top() == Token::Type::kwFunction)
+            result->functions.push_back(parseFunction());
+        return result.release();
+    }
+
+    ast::Function * parseFunction() {
+        pop(Token::Type::kwFunction);
+        Token const & name = pop(Token::Type::ident);
+        pop(Token::Type::parOpen);
+        std::vector<Symbol> arguments;
+        if (top() != Token::Type::parClose) {
+            do {
+                arguments.push_back(pop(Token::Type::ident).symbol());
+            } while (condPop(Token::Type::comma));
+        }
+        pop(Token::Type::parClose);
+        std::unique_ptr<ast::Node> body(parseStatement());
+        // mila+ has optional semicolons
+        condPop(Token::Type::semicolon);
+        return new ast::Function(name, std::move(arguments), body.release());
+    }
+
+    /** block ::= kwBegin { declaration } { statement } kwEnd
+     */
+    ast::Block * parseBlock() {
+        Token const & t = pop(Token::Type::kwBegin);
+        std::unique_ptr<ast::Block> result(new ast::Block(t, parseDeclarations()));
+        while (not condPop(Token::Type::kwEnd)) {
+            result->statements.push_back(parseStatement());
+        }
+        return result.release();
+    }
+
+    /** declaration ::= kwConst ident = number { , ident = number }
+                      | kwVar ident {, ident }
+     */
+    ast::Declarations * parseDeclarations() {
+        std::unique_ptr<ast::Declarations> result(new ast::Declarations(top()));
+        while (true) {
+            if (condPop(Token::Type::kwVar))
+                parseVariableDeclaration(result.get());
+            else if (condPop(Token::Type::kwConst))
+                parseConstantDeclaration(result.get());
+            else
+                break;
+        }
+        return result.release();
+    }
+
+    void parseVariableDeclaration(ast::Declarations * into) {
+        do {
+            into->declarations.push_back(new ast::Declaration(pop(Token::Type::ident)));
+        } while (condPop(Token::Type::comma));
+        condPop(Token::Type::semicolon);
+    }
+
+    void parseConstantDeclaration(ast::Declarations * into) {
+        do {
+            Token const & ident = pop(Token::Type::ident);
+            pop(Token::Type::opEq);
+            into->declarations.push_back(new ast::Declaration(ident, new ast::Number(pop(Token::Type::number))));
+        } while (condPop(Token::Type::comma));
+        condPop(Token::Type::semicolon);
+    }
+
+    /** statement ::= ident := expression
+                    | kwWrite expression
+                    | kwRead ident
+                    | kwIf expression kwThen statement [ kwElse statement ]
+                    | kwWhile expression kwDo statement
+                    | block
+                    | return expression
+                    | expression
+     */
+
+    ast::Node * parseStatement() {
+        std::unique_ptr<ast::Node> result(parseStatement_());
+        condPop(Token::Type::semicolon);
+        return result.release();
+    }
+
+    ast::Node * parseStatement_() {
+        Token const & t = top();
+        switch (t.type) {
+            case Token::Type::kwWrite:
+                pop();
+                return new ast::Write(t, parseExpression());
+            case Token::Type::kwRead:
+                pop();
+                return new ast::Read(t, pop(Token::Type::ident).symbol());
+            case Token::Type::kwIf:
+                return parseIf();
+            case Token::Type::kwWhile:
+                return parseWhile();
+            case Token::Type::kwBegin:
+                return parseBlock();
+            case Token::Type::kwReturn:
+                pop();
+                return new ast::Return(t, parseExpression());
+            case Token::Type::ident: {
+                Token const & t = pop();
+                if (condPop(Token::Type::opAssign)) {
+                    return new ast::Assignment(t, parseExpression());
+                } else {
+                    revert();
+                    return parseExpression();
+                }
+            }
+            default:
+                return parseExpression();
+        }
+    }
+
+    ast::If * parseIf() {
+        Token const & t = pop(Token::Type::kwIf);
+        std::unique_ptr<ast::Expression> cond(parseExpression());
+        pop(Token::Type::kwThen);
+        std::unique_ptr<ast::Node> trueCase(parseStatement());
+        if (condPop(Token::Type::kwElse)) {
+            return new ast::If(t, cond.release(), trueCase.release(), parseStatement());
+        }
+        else
+            return new ast::If(t, cond.release(), trueCase.release(), new ast::Number(Token::number(0, 0, 0)));
+    }
+
+    ast::While * parseWhile() {
+        Token const & t = pop(Token::Type::kwWhile);
+        std::unique_ptr<ast::Expression> cond(parseExpression());
+        pop(Token::Type::kwDo);
+        return new ast::While(t, cond.release(), parseStatement());
+    }
+
+    /** expression ::= E1 { (= | <> | < | > | <= | >= ) E1 }
+     */
+    ast::Expression * parseExpression() {
+        std::unique_ptr<ast::Expression> result(parseE1());
+        while (true) {
+            Token const & t = top();
+            if (t == Token::Type::opEq or t == Token::Type::opNeq or t == Token::Type::opLt or t == Token::Type::opGt or t == Token::Type::opLte or t == Token::Type::opGte) {
+                pop();
+                std::unique_ptr<ast::Expression> x(parseE1());
+                result.reset(new ast::Binary(t, result.release(), x.release()));
+            } else {
+                break;
+            }
+        }
+        return result.release();
+    }
+
+    /** E1 ::= E2 { ( + | - ) E2 }
+     */
+    ast::Expression * parseE1() {
+        std::unique_ptr<ast::Expression> result(parseE2());
+        while (true) {
+            Token const & t = top();
+            if (t == Token::Type::opAdd or t == Token::Type::opSub) {
+                pop();
+                std::unique_ptr<ast::Expression> x(parseE2());
+                result.reset(new ast::Binary(t, result.release(), x.release()));
+            } else {
+                break;
+            }
+        }
+        return result.release();
+    }
+
+    /** E2 ::= E3 { ( * | / ) E3 }
+     */
+    ast::Expression * parseE2() {
+        std::unique_ptr<ast::Expression> result(parseE3());
+        while (true) {
+            Token const & t = top();
+            if (t == Token::Type::opMul or t == Token::Type::opDiv) {
+                pop();
+                std::unique_ptr<ast::Expression> x(parseE3());
+                result.reset(new ast::Binary(t, result.release(), x.release()));
+            } else {
+                break;
+            }
+        }
+        return result.release();
+    }
+
+    /** E3 ::= { + | - } factor
+     */
+    ast::Expression * parseE3() {
+        Token const & t = top();
+        if (t == Token::Type::opAdd) {
+            pop();
+            return new ast::Unary(t, parseE3());
+        } else if (t == Token::Type::opSub) {
+            pop();
+            return new ast::Unary(t, parseE3());
+        } else {
+            return parseFactor();
+        }
+    }
+
+    /** factor ::= ident
+                 | number
+                 | '(' expression ')'
+                 | call
+     */
+    ast::Expression * parseFactor() {
+        switch (top().type) {
+            case Token::Type::parOpen: {
+                pop();
+                std::unique_ptr<ast::Expression> result(parseExpression());
+                pop(Token::Type::parClose);
+                return result.release();
+            }
+            case Token::Type::number:
+                return new ast::Number(pop());
+            case Token::Type::ident: {
+                Token const & t = pop();
+                if (condPop(Token::Type::parOpen))
+                    return parseCall(t);
+                else
+                    return new ast::Variable(t);
+            }
+            default:
+                throw ParserError("identifier, call, number or (expression)", top());
+        }
+    }
+
+    /** call ::= ident '(' [ expession { , expression } ] ')'
+     */
+    ast::Call * parseCall(Token const & function) {
+        // ( has already been popped
+        std::unique_ptr<ast::Call> result(new ast::Call(function));
+        if (top() != Token::Type::parClose) {
+            do {
+                result->arguments.push_back(parseExpression());
+            } while (condPop(Token::Type::comma));
+        }
+        pop(Token::Type::parClose);
+        return result.release();
+    }
+
+    Scanner & s;
+
+};
+
+}
+#endif

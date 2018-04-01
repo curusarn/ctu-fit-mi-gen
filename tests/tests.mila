@@ -1,0 +1,83 @@
+function t1() 1
+
+function t2() 1 + 2
+
+function t3(i, j) i + j
+
+function t4(i, j) begin
+    var b
+    b := i + j
+    return b
+end
+
+function t5() begin
+    var i
+    {read i}
+    i := 678
+    return i
+end
+
+function t6(i, j) begin
+  if (i < j) then return i; else return j;
+end
+
+function t7(i, j) begin
+  if (i < j) then return i; else j := 4;
+  return j;
+end
+
+function t8() begin
+  var i
+  i := 10
+  while (i > 0) do begin
+      write i
+      i := i - 1
+      return 67
+  end
+end
+
+function t9() begin
+    var i
+    i := 10
+    begin
+      var i
+      i := 12
+      return i
+    end
+end
+
+
+function t10() begin
+    var i
+    i := 10
+    begin
+      var i
+      i := 12
+    end
+    return i
+end
+
+function t11() begin
+    const i = 5
+    i
+end
+
+function t12() i
+
+var i
+begin
+  i := 67
+  write t1()
+  write t2()
+  write t3(1, 2)
+  write t4(2, 3)
+  write t5()
+  write t6(3, 4)
+  write t7(5, 6)
+  write t8()
+  write t9()
+  write t10()
+  write t11()
+  write t12()
+end
+

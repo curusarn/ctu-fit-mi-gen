@@ -1,0 +1,29 @@
+function a(a, b) return a + b
+
+function b() begin
+    var x
+    read x
+    return x
+end
+
+function c(a) begin
+    var b;
+    const c = 3
+    begin
+        var d
+        d := 67
+        b := d + b()
+    end
+    return a(3,4)
+end
+
+var i;
+{const z = 3}
+begin
+    read i
+    write c(i)
+end
+    
+    
+    
+    
