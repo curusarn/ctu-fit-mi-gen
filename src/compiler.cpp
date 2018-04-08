@@ -2,7 +2,7 @@
 
 namespace mila {
 
-static llvm::LLVMContext TheContext;// = LLVMContextCreate();
+static llvm::LLVMContext TheContext;
 
 llvm::Type * Compiler::t_int = llvm::IntegerType::get(TheContext, 32);
 

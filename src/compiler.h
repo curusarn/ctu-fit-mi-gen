@@ -189,7 +189,7 @@ protected:
         llvm::BasicBlock * falseCase = llvm::BasicBlock::Create(context, "falseCase", f);
         llvm::BasicBlock * next = llvm::BasicBlock::Create(context, "next", f);
 
-        llvm::ICmpInst * cmp = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_NE, result, zero, "");
+        llvm::ICmpInst * cmp = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_NE, result, zero, "if_cond");
         llvm::BranchInst::Create(trueCase, falseCase, cmp, bb);
 
         bb = trueCase;
@@ -219,44 +219,50 @@ protected:
     }
 
     virtual void visit(ast::While * d) {
-        // I was homework
+        // homework
+
+        // save prev bb
+        llvm::Value * prevResult = result;
+        llvm::BasicBlock * prevBB = bb;
+
+        // create basic blocks for condition, cycle body and continuation
+        llvm::BasicBlock * condition = llvm::BasicBlock::Create(context, "condition", f);
+        llvm::BasicBlock * cycleBody = llvm::BasicBlock::Create(context, "cycleBody", f);
+        llvm::BasicBlock * next = llvm::BasicBlock::Create(context, "next", f);
+
+        // jump to condition block
+        llvm::BranchInst::Create(condition, bb);
+        bb = condition;
+
+        // create phi node
+        llvm::PHINode * phi = llvm::PHINode::Create(t_int, 1, "while_phi", bb);
+        phi->addIncoming(prevResult, prevBB);
+        result = phi;
+
         // compile the condition
-        //d->condition->accept(this);
-        // create basic blocks for cycle body and continuation
-        //llvm::BasicBlock * cycleBody = llvm::BasicBlock::Create(context, "cycleBody", f);
-        //llvm::BasicBlock * next = llvm::BasicBlock::Create(context, "next", f);
+        d->condition->accept(this);
 
-        //llvm::ICmpInst * cmp = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_NE, result, zero, "");
-        //llvm::BranchInst::Create(trueCase, falseCase, cmp, bb);
+        llvm::ICmpInst * cmp = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_NE, result, zero, "while_cond");
+        llvm::BranchInst::Create(cycleBody, next, cmp, bb);
 
-        //bb = trueCase;
-        //s->trueCase->accept(this);
-        //trueCase = bb;
-        //llvm::Value * trueResult = result;
-        //if (trueCase != nullptr)
-        //    llvm::BranchInst::Create(next, bb);
-        //bb = falseCase;
-        //s->falseCase->accept(this);
-        //falseCase = bb;
-        //llvm::Value * falseResult = result;
-        //if (falseCase != nullptr)
-        //    llvm::BranchInst::Create(next, bb);
-        //bb = next;
-        //if (falseCase == nullptr and trueCase == nullptr) {
-        //    next->eraseFromParent();
-        //    result = nullptr;
-        //} else {
-        //    llvm::PHINode * phi = llvm::PHINode::Create(t_int, 2, "if_phi", bb);
-        //    if (trueCase != nullptr)
-        //        phi->addIncoming(trueResult, trueCase);
-        //    if (falseCase != nullptr)
-        //        phi->addIncoming(falseResult, falseCase);
-        //    result = phi;
-        //}
+        bb = cycleBody;
+        d->body->accept(this);
+        cycleBody = bb;
+        llvm::Value * trueResult = result;
+
+        if (cycleBody != nullptr) {
+            phi->addIncoming(trueResult, cycleBody);
+            llvm::BranchInst::Create(condition, bb);
+        }
+
+        result = nullptr;
+        bb = next;
     }
 
     virtual void visit(ast::Return * r) {
-        // TODO I am homework
+        // homework
+        r->value->accept(this);
+        result = llvm::ReturnInst::Create(context, result, bb);
     }
 
     virtual void visit(ast::Assignment * a) {
@@ -284,11 +290,66 @@ protected:
     }
 
     virtual void visit(ast::Binary * op) {
-        // TODO I am homework
+        // homework
+        op->lhs->accept(this);
+        llvm::Value * lhsValue = result;
+        op->rhs->accept(this);
+
+        switch (op->type) {
+            case Token::Type::opAdd:
+                result = llvm::BinaryOperator::Create(llvm::Instruction::Add, lhsValue, result, "add", bb);
+                break;
+            case Token::Type::opSub:
+                result = llvm::BinaryOperator::Create(llvm::Instruction::Sub, lhsValue, result, "sub", bb);
+                break;
+            case Token::Type::opMul:
+                result = llvm::BinaryOperator::Create(llvm::Instruction::Mul, lhsValue, result, "mul", bb);
+                break;
+            case Token::Type::opDiv:
+                result = llvm::BinaryOperator::Create(llvm::Instruction::SDiv, lhsValue, result, "sdiv", bb);
+                break;
+            case Token::Type::opEq:
+                result = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_EQ, lhsValue, result, "eq");
+                result = llvm::CastInst::Create(llvm::Instruction::SExt, result, llvm::Type::getInt32Ty(context), "i32", bb);
+                break;
+            case Token::Type::opNeq:
+                result = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_NE, lhsValue, result, "ne");
+                result = llvm::CastInst::Create(llvm::Instruction::SExt, result, llvm::Type::getInt32Ty(context), "i32", bb);
+                break;
+            case Token::Type::opLt:
+                result = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_SLT, lhsValue, result, "slt");
+                result = llvm::CastInst::Create(llvm::Instruction::SExt, result, llvm::Type::getInt32Ty(context), "i32", bb);
+                break;
+            case Token::Type::opGt:
+                result = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_SGT, lhsValue, result, "sgt");
+                result = llvm::CastInst::Create(llvm::Instruction::SExt, result, llvm::Type::getInt32Ty(context), "i32", bb);
+                break;
+            case Token::Type::opLte:
+                result = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_SLE, lhsValue, result, "sle");
+                result = llvm::CastInst::Create(llvm::Instruction::SExt, result, llvm::Type::getInt32Ty(context), "i32", bb);
+                break;
+            case Token::Type::opGte:
+                result = new llvm::ICmpInst(*bb, llvm::ICmpInst::ICMP_SGE, lhsValue, result, "sge");
+                result = llvm::CastInst::Create(llvm::Instruction::SExt, result, llvm::Type::getInt32Ty(context), "i32", bb);
+                break;
+            default:
+                throw Exception("Unknown binary operator token type");
+        }
     }
 
     virtual void visit(ast::Unary * op) {
-        // TODO I am homework
+        // homework
+        op->operand->accept(this);
+
+        switch (op->type) {
+            case Token::Type::opAdd:
+                break;
+            case Token::Type::opSub:
+                result = llvm::BinaryOperator::Create(llvm::Instruction::Sub, zero, result, "neg", bb);
+                break;
+            default:
+                throw Exception("Unknown unary operator token type");
+        }
     }
 
     virtual void visit(ast::Variable * v) {

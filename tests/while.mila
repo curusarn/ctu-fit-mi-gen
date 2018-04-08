@@ -1,0 +1,11 @@
+var a,b;
+const c = 2;
+begin
+   a := 1;
+   b := 3 + c;
+   while a<b do
+   begin
+     a:= a + 1;
+     write a;
+   end
+end
