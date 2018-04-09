@@ -234,10 +234,10 @@ protected:
         llvm::BranchInst::Create(condition, bb);
         bb = condition;
 
+
         // create phi node
-        llvm::PHINode * phi = llvm::PHINode::Create(t_int, 1, "while_phi", bb);
+        llvm::PHINode * phi = llvm::PHINode::Create(t_int, 2, "while_phi", bb);
         phi->addIncoming(prevResult, prevBB);
-        result = phi;
 
         // compile the condition
         d->condition->accept(this);
@@ -251,9 +251,10 @@ protected:
         llvm::Value * trueResult = result;
 
         if (cycleBody != nullptr) {
-            phi->addIncoming(trueResult, cycleBody);
             llvm::BranchInst::Create(condition, bb);
-        }
+            phi->addIncoming(trueResult, cycleBody);
+        } else
+            phi->eraseFromParent();
 
         result = nullptr;
         bb = next;
@@ -262,7 +263,8 @@ protected:
     virtual void visit(ast::Return * r) {
         // homework
         r->value->accept(this);
-        result = llvm::ReturnInst::Create(context, result, bb);
+        llvm::ReturnInst::Create(context, result, bb);
+        bb = nullptr;
     }
 
     virtual void visit(ast::Assignment * a) {

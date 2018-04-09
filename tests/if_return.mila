@@ -1,0 +1,14 @@
+
+function t8() begin
+  var i
+  i := 10
+  if i > 0 then return 67 else write i
+end
+
+
+var i
+begin
+  i := 67
+  write t8()
+end
+
