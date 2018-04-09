@@ -263,7 +263,7 @@ protected:
     virtual void visit(ast::Return * r) {
         // homework
         r->value->accept(this);
-        llvm::ReturnInst::Create(context, result, bb);
+        result = llvm::ReturnInst::Create(context, result, bb);
         bb = nullptr;
     }
 
