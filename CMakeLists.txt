@@ -20,7 +20,7 @@ message(STATUS "CLANG compiler will be used")
 #set(CMAKE_CXX_COMPILER "clang++-3.7")
 
 # set C++11 definitions, error on everything, enable debugging
-add_definitions(--std=c++11 -Wall -Werror -g)
+add_definitions(--std=c++11 -pedantic -Wall -Werror -g)
 
 # find llvm package and set it up
 find_package(LLVM REQUIRED CONFIG)
@@ -30,7 +30,7 @@ include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
 # add sources
-file(GLOB_RECURSE SRC "src/*.cpp" "src/*.h" "tests/*.mila")
+file(GLOB_RECURSE SRC "src/*.cpp" "src/*.cc" "src/*.h" "tests/*.mila")
 add_executable(${PROJECT_NAME} ${SRC})
 
 # Find the libraries that correspond to the LLVM components

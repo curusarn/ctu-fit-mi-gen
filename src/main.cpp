@@ -14,6 +14,7 @@
 #include "compiler.h"
 #include "jit.h"
 
+#include "abstract_interpretation.h"
 
 using namespace mila;
 
@@ -42,6 +43,8 @@ int main(int argc, char const * argv[]) {
         llvm::Function * f = Compiler::compile(m);
         if (verbose)
             f->getParent()->print(llvm::outs(), nullptr);
+        
+        AbstractInterpretation::dummy(f, verbose); 
         if (emitir != nullptr) {
             std::error_code error;
             llvm::raw_fd_ostream o(emitir, error, llvm::sys::fs::OpenFlags::F_None);

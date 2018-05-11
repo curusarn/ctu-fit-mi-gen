@@ -25,6 +25,7 @@
 #include <llvm/Pass.h>
 #include <llvm/Bitcode/BitcodeWriter.h>
 #include <llvm/Bitcode/BitcodeReader.h>
+#include "llvm/IR/Function.h"
 
 #include <llvm/Support/raw_os_ostream.h>
 #endif
