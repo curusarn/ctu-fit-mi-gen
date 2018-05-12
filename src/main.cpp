@@ -14,7 +14,7 @@
 #include "compiler.h"
 #include "jit.h"
 
-#include "abstract_interpretation.h"
+#include "abstractinterpretation.h"
 
 using namespace mila;
 

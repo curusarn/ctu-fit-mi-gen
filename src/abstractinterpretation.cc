@@ -1,6 +1,6 @@
 
+#include "abstractinterpretation.h"
 #include <iostream>
-#include "abstract_interpretation.h"
 
 void AbstractInterpretation::dummy(llvm::Function * mainFunc,
                                    bool verbose) {
@@ -17,7 +17,7 @@ void AbstractInterpretation::dummy(llvm::Function * mainFunc,
     int b = 0, i = 10;
     for (llvm::BasicBlock & bb : bb_list) {
         std::string bb_name = bb.getName();
-        if (bb_name.compare("") == 0) {
+        if (bb_name == std::string("")) {
             bb_name = bb_name_prefix + std::to_string(b);
             b++;
             bb.setName(bb_name);
@@ -28,7 +28,7 @@ void AbstractInterpretation::dummy(llvm::Function * mainFunc,
 
         for (llvm::Instruction & inst : bb) {
             std::string inst_name = inst.getName();
-            if (inst_name.compare("") == 0) {
+            if (inst_name == std::string("")) {
                 inst_name = inst_name_prefix + std::to_string(i);
                 i++;
                 inst.setName(inst_name);
@@ -39,9 +39,23 @@ void AbstractInterpretation::dummy(llvm::Function * mainFunc,
     }
     
     std::cout << "[AI] walk trough basic blocks" << std::endl;
-    std::map<std::string, bool> visited;
     
-    //llvm::BasicBlock bb = LLVMGetEntryBasicBlock(mainFunc);
-    //llvm::BasicBlock & bb
+    auto ai = AbstractInterpretation();
+    ai.visitBasicBlock(mainFunc->getEntryBlock());
 
+}
+
+void AbstractInterpretation::visitBasicBlock(const llvm::BasicBlock & bb) {
+    std::string bb_name = bb.getName();
+    std::cout << bb_name << std::endl;
+    if (visited_.count(bb_name))
+        return;
+
+    std::cout << "    -> true" << std::endl;
+    visited_[bb_name] = true;
+
+    const llvm::TerminatorInst * t_inst = bb.getTerminator();
+
+    for (const llvm::BasicBlock * bb_next : t_inst->successors()) 
+        visitBasicBlock(*bb_next);
 }
