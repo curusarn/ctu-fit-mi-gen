@@ -20,7 +20,7 @@ message(STATUS "CLANG compiler will be used")
 #set(CMAKE_CXX_COMPILER "clang++-3.7")
 
 # set C++11 definitions, error on everything, enable debugging
-add_definitions(--std=c++11 -pedantic -Wall -Werror -g)
+add_definitions(--std=c++11 -pedantic -Wall -Werror -g -fno-rtti)
 
 # find llvm package and set it up
 find_package(LLVM REQUIRED CONFIG)
