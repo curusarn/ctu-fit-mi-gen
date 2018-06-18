@@ -2,16 +2,15 @@
 #include "abstractinterpretation.h"
 #include <iostream>
 
-void AbstractInterpretation::dummy(llvm::Function * mainFunc,
-                                   bool verbose) {
-    if (verbose)
-        std::cout << "AbstractInterpretation" << std::endl;
+void NameTheUnnamed(llvm::Function * func, bool verbose) {
 
-    llvm::Function::BasicBlockListType & bb_list = 
-                                                mainFunc->getBasicBlockList();
+    llvm::Function::BasicBlockListType & bb_list = func->getBasicBlockList();
 
+    if (verbose) {
+        std::cout << "[AI] print basic blocks (and name the unnamed)" 
+                  << std::endl;
+    }
 
-    std::cout << "[AI] print basic blocks (and name the unnamed)" << std::endl;
     std::string bb_name_prefix = "BB_";
     std::string inst_name_prefix = "INST_";
     int b = 0, i = 10;
@@ -37,6 +36,12 @@ void AbstractInterpretation::dummy(llvm::Function * mainFunc,
             //eraseFromParent()
         }
     }
+}
+
+void AbstractInterpretation::dummy(llvm::Function * mainFunc,
+                                   bool verbose) {
+    if (verbose)
+        std::cout << "AbstractInterpretation" << std::endl;
     
     std::cout << "[AI] walk trough basic blocks" << std::endl;
     

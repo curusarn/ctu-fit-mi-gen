@@ -7,8 +7,8 @@
 
 #include "llvm.h"
 
-#include "mila/scanner.h"
 #include "mila/ast.h"
+#include "mila/scanner.h"
 #include "mila/parser.h"
 #include "mila/printer.h"
 #include "compiler.h"
@@ -44,12 +44,28 @@ int main(int argc, char const * argv[]) {
         if (verbose)
             f->getParent()->print(llvm::outs(), nullptr);
         
-        AbstractInterpretation::dummy(f, verbose); 
+        //llvm::PassRegistry * pr = llvm::PassRegistry::getPassRegistry();
+        //std::cout << "[mem2reg] Run Pass" << std::endl;
+        
+        //llvm::FunctionPass * mem2reg_pass = llvm::createPromoteMemoryToRegisterPass();
+
+        //pr->add(mem2reg_pass);
+
+        //llvm::initializeCore(*pr);
+
+        //if (verbose)
+        //    f->getParent()->print(llvm::outs(), nullptr);
+
+        //NameTheUnnamed(f, verbose);
+        //AbstractInterpretation::dummy(f, verbose); 
+
         if (emitir != nullptr) {
+            std::cout << "emit ir" << std::endl;
             std::error_code error;
             llvm::raw_fd_ostream o(emitir, error, llvm::sys::fs::OpenFlags::F_None);
             llvm::WriteBitcodeToFile(f->getParent(), o);
         } else {
+            std::cout << "dont emit ir" << std::endl;
             std::cout << JIT::compile(f)() << std::endl;
         }
         return EXIT_SUCCESS;

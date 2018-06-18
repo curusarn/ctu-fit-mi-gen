@@ -3,6 +3,8 @@
 
 #include "llvm.h"
 
+void NameTheUnnamed(llvm::Function * f, bool verbose);
+
 class AbstractInterpretation {
     std::map<std::string, bool> visited_;
 public:
