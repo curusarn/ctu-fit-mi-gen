@@ -9,9 +9,11 @@ if expand('%') == '' && !&modified && line('$') <= 1 && getline(1) == ''
 endif
 set shortmess=aoO
 badd +18 compiler.cpp
-badd +291 compiler.h
-badd +0 mila/ast.cpp
-badd +0 mila/ast.h
+badd +1 compiler.h
+badd +1 mila/ast.cpp
+badd +1 mila/ast.h
+badd +1 main.cpp
+badd +1 llvm.h
 argglobal
 silent! argdel *
 $argadd compiler.cpp
@@ -31,11 +33,7 @@ set nosplitbelow
 set nosplitright
 wincmd t
 set winminheight=1 winheight=1 winminwidth=1 winwidth=1
-exe 'vert 1resize ' . ((&columns * 119 + 119) / 239)
-exe '2resize ' . ((&lines * 27 + 28) / 57)
-exe 'vert 2resize ' . ((&columns * 119 + 119) / 239)
-exe '3resize ' . ((&lines * 26 + 28) / 57)
-exe 'vert 3resize ' . ((&columns * 119 + 119) / 239)
+wincmd =
 argglobal
 if bufexists('compiler.h') | buffer compiler.h | else | edit compiler.h | endif
 setlocal fdm=manual
@@ -47,12 +45,12 @@ setlocal fml=1
 setlocal fdn=20
 setlocal fen
 silent! normal! zE
-let s:l = 352 - ((34 * winheight(0) + 27) / 54)
+let s:l = 217 - ((21 * winheight(0) + 21) / 43)
 if s:l < 1 | let s:l = 1 | endif
 exe s:l
 normal! zt
-352
-normal! 09|
+217
+normal! 013|
 wincmd w
 argglobal
 if bufexists('compiler.cpp') | buffer compiler.cpp | else | edit compiler.cpp | endif
@@ -65,11 +63,11 @@ setlocal fml=1
 setlocal fdn=20
 setlocal fen
 silent! normal! zE
-let s:l = 18 - ((13 * winheight(0) + 13) / 27)
+let s:l = 15 - ((14 * winheight(0) + 13) / 27)
 if s:l < 1 | let s:l = 1 | endif
 exe s:l
 normal! zt
-18
+15
 normal! 0
 wincmd w
 argglobal
@@ -83,18 +81,14 @@ setlocal fml=1
 setlocal fdn=20
 setlocal fen
 silent! normal! zE
-let s:l = 456 - ((12 * winheight(0) + 13) / 26)
+let s:l = 463 - ((12 * winheight(0) + 13) / 26)
 if s:l < 1 | let s:l = 1 | endif
 exe s:l
 normal! zt
-456
+463
 normal! 0
 wincmd w
-exe 'vert 1resize ' . ((&columns * 119 + 119) / 239)
-exe '2resize ' . ((&lines * 27 + 28) / 57)
-exe 'vert 2resize ' . ((&columns * 119 + 119) / 239)
-exe '3resize ' . ((&lines * 26 + 28) / 57)
-exe 'vert 3resize ' . ((&columns * 119 + 119) / 239)
+wincmd =
 tabedit mila/ast.h
 set splitbelow splitright
 wincmd _ | wincmd |
@@ -105,8 +99,7 @@ set nosplitbelow
 set nosplitright
 wincmd t
 set winminheight=1 winheight=1 winminwidth=1 winwidth=1
-exe 'vert 1resize ' . ((&columns * 119 + 119) / 239)
-exe 'vert 2resize ' . ((&columns * 119 + 119) / 239)
+wincmd =
 argglobal
 2argu
 if bufexists('mila/ast.h') | buffer mila/ast.h | else | edit mila/ast.h | endif
@@ -119,11 +112,11 @@ setlocal fml=1
 setlocal fdn=20
 setlocal fen
 silent! normal! zE
-let s:l = 215 - ((22 * winheight(0) + 27) / 54)
+let s:l = 13 - ((12 * winheight(0) + 27) / 54)
 if s:l < 1 | let s:l = 1 | endif
 exe s:l
 normal! zt
-215
+13
 normal! 09|
 wincmd w
 argglobal
@@ -138,18 +131,63 @@ setlocal fml=1
 setlocal fdn=20
 setlocal fen
 silent! normal! zE
-let s:l = 146 - ((34 * winheight(0) + 27) / 54)
+let s:l = 4 - ((3 * winheight(0) + 27) / 54)
 if s:l < 1 | let s:l = 1 | endif
 exe s:l
 normal! zt
-146
+4
 normal! 0
 wincmd w
-exe 'vert 1resize ' . ((&columns * 119 + 119) / 239)
-exe 'vert 2resize ' . ((&columns * 119 + 119) / 239)
+wincmd =
+tabedit main.cpp
+set splitbelow splitright
+set nosplitbelow
+set nosplitright
+wincmd t
+set winminheight=1 winheight=1 winminwidth=1 winwidth=1
+argglobal
+if bufexists('main.cpp') | buffer main.cpp | else | edit main.cpp | endif
+setlocal fdm=manual
+setlocal fde=0
+setlocal fmr={{{,}}}
+setlocal fdi=#
+setlocal fdl=0
+setlocal fml=1
+setlocal fdn=20
+setlocal fen
+silent! normal! zE
+let s:l = 6 - ((5 * winheight(0) + 27) / 54)
+if s:l < 1 | let s:l = 1 | endif
+exe s:l
+normal! zt
+6
+normal! 0
+tabedit llvm.h
+set splitbelow splitright
+set nosplitbelow
+set nosplitright
+wincmd t
+set winminheight=1 winheight=1 winminwidth=1 winwidth=1
+argglobal
+if bufexists('llvm.h') | buffer llvm.h | else | edit llvm.h | endif
+setlocal fdm=manual
+setlocal fde=0
+setlocal fmr={{{,}}}
+setlocal fdi=#
+setlocal fdl=0
+setlocal fml=1
+setlocal fdn=20
+setlocal fen
+silent! normal! zE
+let s:l = 15 - ((14 * winheight(0) + 27) / 54)
+if s:l < 1 | let s:l = 1 | endif
+exe s:l
+normal! zt
+15
+normal! 0
 tabnext 1
 set stal=1
-if exists('s:wipebuf')
+if exists('s:wipebuf') && s:wipebuf != bufnr('%')
   silent exe 'bwipe ' . s:wipebuf
 endif
 unlet! s:wipebuf

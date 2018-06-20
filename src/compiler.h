@@ -111,6 +111,10 @@ protected:
     void compileFunctionBody(ast::Node * node) {
         // now compile the body
         node->accept(this);
+
+        // don't insert return statemaent if there is one already 
+        if (bb == nullptr)
+            return;
         // finally, check if last instruction was not return, and if not emit return 0
         if (result == nullptr)
             result = llvm::ReturnInst::Create(context, zero, bb);
@@ -208,6 +212,7 @@ protected:
         if (falseCase == nullptr and trueCase == nullptr) {
             next->eraseFromParent();
             result = nullptr;
+            bb = nullptr;
         } else {
             llvm::PHINode * phi = llvm::PHINode::Create(t_int, 2, "if_phi", bb);
             if (trueCase != nullptr)
@@ -256,7 +261,7 @@ protected:
         } else
             phi->eraseFromParent();
 
-        result = nullptr;
+        result = zero;
         bb = next;
     }
 
@@ -264,6 +269,8 @@ protected:
         // homework
         r->value->accept(this);
         result = llvm::ReturnInst::Create(context, result, bb);
+        if (result == nullptr)
+            throw std::exception();
         bb = nullptr;
     }
 

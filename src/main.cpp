@@ -30,8 +30,10 @@ int main(int argc, char const * argv[]) {
         for (int i = 1; i < argc; ++i) {
             if (strncmp(argv[i],"--verbose", 10) == 0)
                 verbose = true;
-            else if (strncmp(argv[i], "--emit", 7) == 0)
+            else if (strncmp(argv[i], "--emit", 7) == 0) {
                 emitir = argv[++i];
+                std::cout << emitir << std::endl;
+            }
             else if (filename != nullptr)
                 throw Exception("Invalid usage! mila+ [--verbose] [--emit filename] filename");
             else
@@ -60,12 +62,10 @@ int main(int argc, char const * argv[]) {
         //AbstractInterpretation::dummy(f, verbose); 
 
         if (emitir != nullptr) {
-            std::cout << "emit ir" << std::endl;
             std::error_code error;
             llvm::raw_fd_ostream o(emitir, error, llvm::sys::fs::OpenFlags::F_None);
             llvm::WriteBitcodeToFile(f->getParent(), o);
         } else {
-            std::cout << "dont emit ir" << std::endl;
             std::cout << JIT::compile(f)() << std::endl;
         }
         return EXIT_SUCCESS;
