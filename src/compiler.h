@@ -86,7 +86,7 @@ protected:
         // create the context for the function block
         c = new BlockContext(c);
         // create the initial basic block for the function
-        bb = llvm::BasicBlock::Create(context, "", this->f);
+        bb = llvm::BasicBlock::Create(context, "bb", this->f);
         // arguments to the function are in registers, create variables for them 
         llvm::Function::arg_iterator args = this->f->arg_begin();
         for (Symbol const & s: f->arguments) {
@@ -149,7 +149,7 @@ protected:
         llvm::FunctionType * ft = llvm::FunctionType::get(t_int, false);
         f = llvm::Function::Create(ft, llvm::GlobalValue::ExternalLinkage, "main", m);
         // create the initial basic block and compile the body
-        bb = llvm::BasicBlock::Create(context, "", this->f);
+        bb = llvm::BasicBlock::Create(context, "bb", this->f);
         compileFunctionBody(module->body);
     }
 

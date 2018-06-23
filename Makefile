@@ -1,11 +1,15 @@
-.PHONY: clean entrypoint print-vars
+.PHONY: clean all print-vars showIR
+.SILENT: FORCE
 
 FILE := tests/if_return
 PASSES := -hello
 
 # ENTRYPOINT
 
-entrypoint: print-vars ${FILE}.final.bc
+all: print-vars ${FILE}.final.bc
+
+showIR: all
+	vim -O ${FILE}.ll ${FILE}.mem2reg.ll ${FILE}.final.ll
 
 print-vars:
 	# ####################################################
@@ -13,9 +17,10 @@ print-vars:
 	# PASSES = ${PASSES}
 	# ####################################################
 
+
 # MY_PASSES
 
-${FILE}.final.bc: ${FILE}.mem2reg.bc passes/build/libMyPasses.so
+${FILE}.final.bc: ${FILE}.mem2reg.bc passes/build/libMyPasses.so FORCE
 	opt -load=passes/build/libMyPasses.so ${PASSES} -o ${FILE}.final.bc ${FILE}.mem2reg.bc
 	llvm-dis ${FILE}.final.bc
 
@@ -38,7 +43,7 @@ ${FILE}.mem2reg.bc: ${FILE}.bc
 
 # FRONTEND
 
-${FILE}.bc: build/mila+
+${FILE}.bc: build/mila+ ${FILE}.mila
 	build/mila+ ${OPT} --emit ${FILE}.bc ${FILE}.mila
 	llvm-dis ${FILE}.bc
 
@@ -62,3 +67,5 @@ clean:
 	-rm -rf build
 	-rm -rf passes/build
 
+FORCE:
+	# ALWAYS REBUILD
