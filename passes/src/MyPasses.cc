@@ -18,34 +18,30 @@ namespace {
             return false;
         }
     }; // end of struct Hello
-}  // end of anonymous namespace
 
-namespace {
+    template <class T>
     struct AbstractInterpretation : public FunctionPass {
-        static char ID;
-
         std::map<std::string, bool> bb_data_changed_;
-        // bool -> T
-        std::map<Instruction*, bool> inst_data_;
+        std::map<Instruction*, T> inst_data_;
 
-        // accept pass details, pass.processInstruction(inst, data_[inst])
-        AbstractInterpretation() : FunctionPass(ID) {}
+        explicit AbstractInterpretation(char ID) : FunctionPass(ID) {} 
+
+        virtual T processInstruction(const Instruction * inst,
+                                     const T & prev_inst_data) = 0;
 
         bool doInitialization(Function &) {
             bb_data_changed_.clear();
             inst_data_.clear();
-            // return pass.init();
             return false;
         }
 
         bool doFinalization(Function &) {
-            // bool modified = pass.finish();
             bb_data_changed_.clear();
             inst_data_.clear();
             return false;
         }
 
-        bool runOnBlockRecursively(BasicBlock &B, bool prev_inst_data = false) {
+        bool runOnBlockRecursively(BasicBlock &B, T & prev_inst_data) {
             errs() << "AI block: ";
             errs().write_escaped(B.getName()) << '\n';
 
@@ -63,11 +59,9 @@ namespace {
                 errs().write_escaped(inst->getName()) << '\n';
 
                 if (!inst_data_.count(inst))
-                    inst_data_[inst] = false;
-                    //data_[inst] = T();
+                    inst_data_[inst] = T();
                     
-                bool inst_data = true; // visit
-                //T inst_data = pass.processInstruction(inst, prev_inst_data);
+                T inst_data = this->processInstruction(inst, prev_inst_data);
                 prev_inst_data = inst_data;
               
                 if (inst_data_[inst] < inst_data) {
@@ -84,7 +78,7 @@ namespace {
             // continue with next bb's
             TerminatorInst * t_inst = B.getTerminator();
 
-            for (llvm::BasicBlock * bb_next : t_inst->successors()) 
+            for (llvm::BasicBlock * bb_next : t_inst->successors())
                 modified = (runOnBlockRecursively(*bb_next, prev_inst_data)
                             || modified);
 
@@ -96,7 +90,8 @@ namespace {
             errs().write_escaped(F.getName()) << '\n';
             bool modified=false;  
 
-            return runOnBlockRecursively(F.getEntryBlock());
+            T temp;
+            return runOnBlockRecursively(F.getEntryBlock(), temp);
 
             for (inst_iterator It = inst_begin(F), E = inst_end(F); It != E; ++It)
             {
@@ -106,11 +101,30 @@ namespace {
 
             return modified;
         }
-    }; // end of struct Hello
-}  // end of anonymous namespace
+    }; // end of struct AbstractInterpretation
+
+    struct DummyAI : public AbstractInterpretation<bool> {
+        static char ID;
+        
+        DummyAI() : AbstractInterpretation(ID) {}
+
+        bool processInstruction(const Instruction *, const bool &) override {
+            return true; 
+        }
+
+        bool doInitialization(Function &F) {
+            bool ret = AbstractInterpretation::doInitialization(F);
+            // do stuff
+            return ret;
+        }
+
+        bool doFinalization(Function &F) {
+            // do stuff
+            return AbstractInterpretation::doFinalization(F);
+        }
+    }; // end of DummyAI
 
 
-namespace {
     struct CheckNames : public FunctionPass {
         static char ID;
         CheckNames() : FunctionPass(ID) {}
@@ -144,8 +158,9 @@ static RegisterPass<CheckNames> X2("checknames", "CheckNames Pass",
         false /* Only looks at CFG */,
         false /* Analysis Pass */);
 
-char AbstractInterpretation::ID = 2;
-static RegisterPass<AbstractInterpretation> X3("ai_dummy", "AbstractInterpretation Pass",
+char DummyAI::ID = 2;
+static RegisterPass<DummyAI> X3("ai_dummy", "Dummy AbstractInterpretation Pass",
         false /* Only looks at CFG */,
         false /* Analysis Pass */);
+
 
