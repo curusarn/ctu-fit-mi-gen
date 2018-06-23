@@ -1,0 +1,12 @@
+function t4(i, j) begin
+    var b
+    b := i + j
+    return b
+end
+
+var i
+begin
+  i := 67
+  write t4(2, 3)
+end
+

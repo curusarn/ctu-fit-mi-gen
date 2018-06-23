@@ -1,0 +1,8 @@
+var i, j, k, l
+begin
+  i := 67
+  j := i + 3
+  k := i - 3
+  l := k * 2 + j
+end
+

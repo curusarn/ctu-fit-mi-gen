@@ -1,0 +1,9 @@
+
+
+var i, j
+begin
+  i := 67
+  j := 60
+  if (i < j) then return i; else return j;
+end
+
