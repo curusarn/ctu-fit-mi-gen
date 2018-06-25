@@ -1,3 +1,4 @@
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/InstrTypes.h"
@@ -19,79 +20,96 @@ namespace {
         }
     }; // end of struct Hello
 
-    template <class T>
-    struct AbstractInterpretation : public FunctionPass {
-        std::map<std::string, bool> bb_data_changed_;
-        std::map<Instruction*, T> inst_data_;
+    template <class T> struct AbstractInterpretation : public FunctionPass {
+        using state_type = std::map<std::string, T>;
+        std::map<std::string, std::map<std::string, T>> bb_state_;
 
         explicit AbstractInterpretation(char ID) : FunctionPass(ID) {} 
 
-        virtual T processInstruction(const Instruction * inst,
-                                     const T & prev_inst_data) = 0;
+        virtual state_type flowState(const Instruction * inst,
+                const state_type & cur_state) = 0;
 
         bool doInitialization(Function &) {
-            bb_data_changed_.clear();
-            inst_data_.clear();
+            bb_state_.clear();
             return false;
         }
 
         bool doFinalization(Function &) {
-            bb_data_changed_.clear();
-            inst_data_.clear();
+            bb_state_.clear();
             return false;
         }
 
-        bool runOnBlockRecursively(BasicBlock &B, T & prev_inst_data) {
-            errs() << "AI block: ";
-            errs().write_escaped(B.getName()) << '\n';
+        state_type mergeStates(const state_type & A, const state_type & B) {
+            state_type state;
+            for (const auto & it : A)
+                if (!B.count(it.first))
+                    state[it.first] = it.second; 
+                else
+                    state[it.first] =
+                        T::getLeastUpperBound(it.second, B.at(it.first));
 
-            if (bb_data_changed_.count(B.getName())
-                    and !bb_data_changed_[B.getName()]) {
-                return false;
+            for (const auto & it : B)
+                if (!A.count(it.first))
+                    state[it.first] = it.second; 
+
+            return state; 
+        }
+
+        bool statesEqual(const state_type & A, const state_type & B) {
+            return A == B;
+        }
+
+        state_type mergePredecessorStates(const BasicBlock & bb) {
+            state_type state;
+            for (const BasicBlock * pred : predecessors(&bb)) {
+                state = mergeStates(state, bb_state_[pred->getName()]);
             }
-
-            bool modified = false;  
-            bool bb_data_changed = false;
-            
-            // loop and shit
-            for (Instruction &I : B) {
-                Instruction * inst = &I;
-                errs().write_escaped(inst->getName()) << '\n';
-
-                if (!inst_data_.count(inst))
-                    inst_data_[inst] = T();
-                    
-                T inst_data = this->processInstruction(inst, prev_inst_data);
-                prev_inst_data = inst_data;
-              
-                if (inst_data_[inst] < inst_data) {
-                    inst_data_[inst] = inst_data;
-                    bb_data_changed = true;
-                } else
-                    assert(inst_data_[inst] == inst_data
-                           && "Broken lattice property:"
-                           " inst_olddata > inst_newdata");
-            }
-
-            bb_data_changed_[B.getName()] = bb_data_changed;
-
-            // continue with next bb's
-            TerminatorInst * t_inst = B.getTerminator();
-
-            for (llvm::BasicBlock * bb_next : t_inst->successors())
-                modified = (runOnBlockRecursively(*bb_next, prev_inst_data)
-                            || modified);
-
-            return modified;
+            return state;
         }
 
         bool runOnFunction(Function &F) override {
             errs() << "AI function: ";
             errs().write_escaped(F.getName()) << '\n';
-            bool modified=false;  
 
-            T temp;
-            return runOnBlockRecursively(F.getEntryBlock(), temp);
+            bool modified=false;  
+            // Set initial states
+            Function::BasicBlockListType & bb_list = F.getBasicBlockList();
+            for (BasicBlock & bb : bb_list) {
+                bb_state_[bb.getName()] = state_type();
+                //set bb.inState = bottom for every variable
+                //set bb.outState = bottom for every variable
+            }
+            BasicBlock & ebb = F.getEntryBlock();
+            //set ebb.inState = (user-defined initial state)
+
+            // Iterate until fixed point TODO
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                // Process all basic blocks, looking for changes
+                for (BasicBlock & bb : bb_list) {
+                    errs() << "AI block: ";
+                    errs().write_escaped(bb.getName()) << '\n';
+                    // Set up in state
+                    state_type bb_instate = (&bb != &ebb) ? mergePredecessorStates(bb) : state_type();
+                    state_type cur_state = bb_instate;
+
+                    // Interpret block
+                    for (Instruction &I : bb) {
+                        Instruction * inst = &I;
+
+                        cur_state = this->flowState(inst, cur_state);
+                    }
+                    // Set out state and check for changes
+                    if (!statesEqual(cur_state, bb_state_.at(bb.getName())))
+                        changed = true;
+                    bb_state_[bb.getName()] = cur_state;
+                }
+            }
+
+            return modified;
+
+            //bool modified=false;  
 
             for (inst_iterator It = inst_begin(F), E = inst_end(F); It != E; ++It)
             {
@@ -101,15 +119,37 @@ namespace {
 
             return modified;
         }
+
+
     }; // end of struct AbstractInterpretation
 
-    struct DummyAI : public AbstractInterpretation<bool> {
+    struct DummyLattice {
+        int value;
+        static DummyLattice getTop() { return DummyLattice(1); }
+        static DummyLattice getBottom() { return DummyLattice(0); }
+        static DummyLattice getLeastUpperBound(const DummyLattice & A,
+                const DummyLattice & B) {
+            int v = std::max(A.value, B.value);
+            return (v == A.value) ? DummyLattice(A) : DummyLattice(B);
+        }
+        DummyLattice() : DummyLattice(getBottom()) {}
+        DummyLattice(const DummyLattice & dl) = default;
+        DummyLattice & operator= (const DummyLattice & dl) 
+        { value = dl.value; return *this; }
+        explicit DummyLattice(int x) : value(x) {};
+        bool operator== (const DummyLattice & B) const { return value == B.value; };
+    };
+
+    struct DummyAI : public AbstractInterpretation<DummyLattice> {
         static char ID;
-        
+
         DummyAI() : AbstractInterpretation(ID) {}
 
-        bool processInstruction(const Instruction *, const bool &) override {
-            return true; 
+        AbstractInterpretation::state_type flowState(const Instruction *,
+                const AbstractInterpretation::state_type &) override {
+            auto state = AbstractInterpretation::state_type();
+            state["dummy"] = DummyLattice(1);
+            return state;
         }
 
         bool doInitialization(Function &F) {
