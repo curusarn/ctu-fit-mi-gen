@@ -173,6 +173,7 @@ BasicLattice BasicLattice::getParent() const {
 
 BasicLattice BasicLattice::getLeastUpperBound(const BasicLattice & A,
                                               const BasicLattice & B) {
+    // handle Type::Bottom because it does not have a single parent
     if (A.type == Type::Bottom)
         return B;
     if (B.type == Type::Bottom)
@@ -181,10 +182,10 @@ BasicLattice BasicLattice::getLeastUpperBound(const BasicLattice & A,
     if (A == B)
         return A;
     if (A.getRank() < B.getRank())
-       return getLeastUpperBound(A.getParent(), B); 
+       return getLeastUpperBound(A.getParent(), B);
     if (B.getRank() < A.getRank())
-       return getLeastUpperBound(A, B.getParent()); 
-    return getLeastUpperBound(A.getParent(), B.getParent()); 
+       return getLeastUpperBound(A, B.getParent());
+    return getLeastUpperBound(A.getParent(), B.getParent());
 }
 
 std::pair<BasicLattice, BasicLattice> BasicLattice::toSameRank(
@@ -256,7 +257,7 @@ bool ConstantPropagation::postprocess(Function &F) {
                     auto val = inst_state.at(op_name).value;
                     Value * c = ConstantInt::get(context, llvm::APInt(32, val));
                     inst->setOperand(i, c);
-                    // I'm deliberately leaking memory
+                    // I'm probably leaking memory
                     errs() << "> > > replaced with: " << val << "\n";
                     modified = true;
                 }
@@ -301,7 +302,7 @@ ConstantPropagation::state_type ConstantPropagation::getEntryBlockState(
 }
 
 int BasicLattice::isGreaterThan(BasicLattice::Type at,
-                                 BasicLattice::Type bt) {
+                                BasicLattice::Type bt) {
     if ((at == BasicLattice::Type::Positive
          && 
          (bt == BasicLattice::Type::Zero
@@ -368,7 +369,6 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
         return state;
     }
 
-
     // RETURN VALUE OF FIRST OPERAND 
     case Instruction::Load: 
     case Instruction::SExt:
@@ -393,7 +393,7 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
     // 2 OPERAND INSTRUCTIONS
     default:
         // all other instructions have two operands
-        assert(num_operands == 2 && inst->getOpcodeName());
+        assert(2 == num_operands && inst->getOpcodeName());
         auto x = llvmValue2BasicLattice({ops[0], ops[1]}, state);
         x = BasicLattice::toSameRank(x);
         auto a = x.first;
@@ -402,6 +402,11 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
         auto bt = b.type;
         int rank = a.getRank();
     
+        // Zero, Zero should not happen because Zero should not 
+        //      appear in a state
+        assert((at != BasicLattice::Type::Zero 
+                || bt != BasicLattice::Type::Zero)
+               && "this should not happen");
         // NESTED SWITCH for rest of the instructions
         switch (inst->getOpcode()) {
         case Instruction::ICmp: {
@@ -448,6 +453,7 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                         return state; 
                     }
                     break;
+                case ICmpInst::ICMP_SGE:
                 case ICmpInst::ICMP_SGT:
                     res = BasicLattice::isGreaterThan(at, bt);
                     if (-1 == res) 
@@ -455,27 +461,8 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                     state[inst_name] =
                             BasicLattice(BasicLattice::Type::SingleValue, res);
                     return state;
-                case ICmpInst::ICMP_SGE:
-                    res = BasicLattice::isGreaterThan(at, bt);
-                    if (at == BasicLattice::Type::Zero
-                        && bt == BasicLattice::Type::Zero)
-                        res = 1;
-                    if (-1 == res) 
-                        break;
-                    state[inst_name] =
-                            BasicLattice(BasicLattice::Type::SingleValue, res);
-                    return state;
-                case ICmpInst::ICMP_SLT:
-                    res = ! BasicLattice::isGreaterThan(at, bt);
-                    if (at == BasicLattice::Type::Zero
-                        && bt == BasicLattice::Type::Zero)
-                        res = 0;
-                    if (-1 == res) 
-                        break;
-                    state[inst_name] =
-                            BasicLattice(BasicLattice::Type::SingleValue, res);
-                    return state;
                 case ICmpInst::ICMP_SLE:
+                case ICmpInst::ICMP_SLT:
                     res = ! BasicLattice::isGreaterThan(at, bt);
                     if (-1 == res) 
                         break;
@@ -531,14 +518,7 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                 state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
                 return state; 
             }
-            // Zero + Zero -> SingleValue of 0 !!!
-            if (at == BasicLattice::Type::Zero &&
-                bt == BasicLattice::Type::Zero) {
-                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
-                                                0);
-                return state; 
-            }
-            // Positive + Negative -> Any
+           // Positive + Negative -> Any
             // Any -> Any
             if ((at == BasicLattice::Type::Positive
                  &&
@@ -599,13 +579,6 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                 state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
                 return state; 
             }
-            // Zero + Zero -> SingleValue of 0 !!!
-            if (at == BasicLattice::Type::Zero &&
-                bt == BasicLattice::Type::Zero) {
-                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
-                                                0);
-                return state; 
-            }
             // Any -> Any
             if ((at == BasicLattice::Type::Positive
                  &&
@@ -662,13 +635,6 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                 state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
                 return state; 
             }
-            // Zero * Zero -> SingleValue of 0 !!!
-            if (at == BasicLattice::Type::Zero || 
-                bt == BasicLattice::Type::Zero) {
-                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
-                                                0);
-                return state; 
-            }
             // Any -> Any
             if (at == BasicLattice::Type::Any
                 &&
@@ -717,16 +683,16 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                 state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
                 return state; 
             }
+            // X / Zero -> assert
+            if (bt == BasicLattice::Type::Zero) {
+                assert(false && "can't divide by zero");
+            }
             // Zero / X -> SingleValue of 0 !!!
             // this could work better
             if (at == BasicLattice::Type::Zero) {
                 state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
                                                 0);
                 return state; 
-            }
-            // X / Zero -> assert
-            if (bt == BasicLattice::Type::Zero) {
-                assert(false && "can't divide by zero");
             }
             // Any -> Any
             if (at == BasicLattice::Type::Any
