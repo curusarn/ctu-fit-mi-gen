@@ -1,0 +1,9 @@
+var i, j, k
+begin
+  i := 1 
+  j := 2 
+  k := 3
+  j := i + 1
+  k := j + 2
+  i := k + 3
+end
