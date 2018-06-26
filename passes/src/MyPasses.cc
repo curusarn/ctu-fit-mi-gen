@@ -53,16 +53,6 @@ struct DummyAI : public AbstractInterpretation<DummyLattice> {
         return state;
     }
 
-    bool doInitialization(Function &F) {
-        bool ret = AbstractInterpretation::doInitialization(F);
-        // do stuff
-        return ret;
-    }
-
-    bool doFinalization(Function &F) {
-        // do stuff
-        return AbstractInterpretation::doFinalization(F);
-    }
 }; // end of DummyAI
 
 struct CheckNames : public FunctionPass {
@@ -125,10 +115,9 @@ struct ConstantPropagation : public AbstractInterpretation<BasicLattice> {
 
     ConstantPropagation() : AbstractInterpretation(ID) {}
 
-    bool doInitialization(Function &F);
-    bool doFinalization(Function &F);
+    bool postprocess(Function &F);
     ConstantPropagation::state_type getEntryBlockState(
-                                            const BasicBlock & bb) override;
+                                    const BasicBlock & bb) override;
     ConstantPropagation::state_type flowState(
                             const Instruction * inst,
                             ConstantPropagation::state_type state) override;
@@ -138,6 +127,7 @@ struct ConstantPropagation : public AbstractInterpretation<BasicLattice> {
                                 const state_type & state) const;
     BasicLattice llvmValue2BasicLattice(const Value * val,
                                         const state_type & state) const;
+    void dumpState(const state_type & state);
 };
 
 // BasicLattice 
@@ -214,15 +204,67 @@ std::pair<BasicLattice, BasicLattice> BasicLattice::toSameRank(
 
 // ConstantPropagation
 
-bool ConstantPropagation::doInitialization(Function &F) {
-    bool ret = AbstractInterpretation::doInitialization(F);
-    // do stuff
-    return ret;
+void ConstantPropagation::dumpState(const state_type & state) {
+    for (auto& x : state)
+        errs() << x.first << ": "
+               << static_cast<int>(x.second.type) << " ("
+               << x.second.value << ")\n";
 }
 
-bool ConstantPropagation::doFinalization(Function &F) {
-    // do stuff !?!
-    return AbstractInterpretation::doFinalization(F);
+bool ConstantPropagation::postprocess(Function &F) {
+    bool modified=false;  
+
+    errs() << "--- POSTPROCESS ---\n";
+    for (inst_iterator It = inst_begin(F), E = inst_end(F); It != E; ++It)
+    {
+        Instruction *inst = &*It;
+        switch (inst->getOpcode()) {
+        case Instruction::Store:
+        case Instruction::PHI: 
+        case Instruction::Load:
+        case Instruction::SExt:
+        case Instruction::ICmp:
+        case Instruction::Call:
+        case Instruction::Ret:
+        case Instruction::Br:
+            break; // SKIP
+
+        case Instruction::Add:
+        case Instruction::Sub:
+        case Instruction::Mul:
+        case Instruction::SDiv: {
+            auto inst_name = inst->getName();
+            errs() << "> INST: ";
+            errs().write_escaped(inst_name) << '\n';
+
+            auto inst_state = inst_state_in_.at(inst);
+            dumpState(inst_state);
+            auto num_operands = inst->getNumOperands();
+            std::vector<const Value *> ops;
+            assert(num_operands <= 3);
+            for (unsigned i = 0; i < num_operands; ++i) {
+                auto * op = inst->getOperand(i);
+                auto op_name = op->getName();
+                errs() << "> > op: ";
+                errs().write_escaped(op_name) << '\n';
+                if ("" != op_name &&
+                    inst_state.count(op_name) &&
+                    BasicLattice::Type::SingleValue == inst_state.at(op_name).type) {
+                    
+                    auto & context = inst->getContext();
+                    auto val = inst_state.at(op_name).value;
+                    Value * c = ConstantInt::get(context, llvm::APInt(32, val));
+                    inst->setOperand(i, c);
+                    // I'm deliberately leaking memory
+                    errs() << "> > > replaced with: " << val << "\n";
+                    modified = true;
+                }
+            }
+        }
+        } // end switch
+    }
+    inst_state_in_.clear();
+    return modified;
 }
 
 std::pair<BasicLattice, BasicLattice>
@@ -263,13 +305,9 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
     // save in states for every instruction for future processing
     inst_state_in_[inst] = state;
     
-    dumpState(state);
-    errs() << "> INST: ";
-    errs().write_escaped(inst->getOpcodeName()) << '\n';
-    errs() << "> INST: ";
-    errs().write_escaped(inst->getOpcodeName()) << '\n';
-    errs() << "> INST: ";
-    errs().write_escaped(inst->getOpcodeName()) << '\n';
+    //dumpState(state);
+    //errs() << "> INST: ";
+    //errs().write_escaped(inst->getOpcodeName()) << '\n';
 
     if (!isa<Value>(inst))
         return state;
@@ -297,6 +335,7 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
             lat = BasicLattice::getLeastUpperBound(lat, tmp_lat);
         }
         state[inst_name] = lat;
+        //state[inst_name] = BasicLattice(BasicLattice::Type::Any);
         return state;
     }
 
