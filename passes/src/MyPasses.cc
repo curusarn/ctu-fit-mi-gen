@@ -107,6 +107,7 @@ struct BasicLattice {
     static std::pair<BasicLattice, BasicLattice> toSameRank(
                                            const BasicLattice & A,
                                            const BasicLattice & B);
+    static int isGreaterThan(BasicLattice::Type, BasicLattice::Type);
 };
 
 struct ConstantPropagation : public AbstractInterpretation<BasicLattice> {
@@ -222,13 +223,13 @@ bool ConstantPropagation::postprocess(Function &F) {
         case Instruction::Store:
         case Instruction::PHI: 
         case Instruction::Load:
-        case Instruction::SExt:
-        case Instruction::ICmp:
-        case Instruction::Call:
-        case Instruction::Ret:
         case Instruction::Br:
+        case Instruction::SExt:
             break; // SKIP
 
+        case Instruction::ICmp:
+        case Instruction::Ret:
+        case Instruction::Call:
         case Instruction::Add:
         case Instruction::Sub:
         case Instruction::Mul:
@@ -299,6 +300,34 @@ ConstantPropagation::state_type ConstantPropagation::getEntryBlockState(
     return state_type();
 }
 
+int BasicLattice::isGreaterThan(BasicLattice::Type at,
+                                 BasicLattice::Type bt) {
+    if ((at == BasicLattice::Type::Positive
+         && 
+         (bt == BasicLattice::Type::Zero
+          ||
+          bt == BasicLattice::Type::Negative)
+        )
+        ||
+        (at == BasicLattice::Type::Zero
+         &&
+         bt == BasicLattice::Type::Negative)
+       ) {
+        return 1; 
+    }
+    if ((at == BasicLattice::Type::Negative
+         ||
+         at == BasicLattice::Type::Zero)
+        && 
+        (bt == BasicLattice::Type::Positive
+         ||
+         bt == BasicLattice::Type::Zero)
+       ) {
+        return 0; 
+    }
+    return -1;
+}
+
 ConstantPropagation::state_type ConstantPropagation::flowState(
                                     const Instruction * inst,
                                     ConstantPropagation::state_type state) {
@@ -350,8 +379,6 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
         return state;
 
     // RETURN BasicLattice::Type::Any
-    case Instruction::ICmp:
-        // XXX: return Any for now (falltrough)
     case Instruction::Call: 
         if ("" != inst_name)
             state[inst_name] = BasicLattice(BasicLattice::Type::Any);
@@ -373,9 +400,95 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
         auto b = x.second;
         auto at = a.type;
         auto bt = b.type;
+        int rank = a.getRank();
     
         // NESTED SWITCH for rest of the instructions
         switch (inst->getOpcode()) {
+        case Instruction::ICmp: {
+            const auto & cmp = cast<ICmpInst>(*inst);
+            // both are SingleValue
+            if (at == BasicLattice::Type::SingleValue
+                && bt == BasicLattice::Type::SingleValue) {
+                int res;
+                switch (cmp.getPredicate()) {
+                case ICmpInst::ICMP_EQ:
+                    res = (a.value == b.value);
+                    break;
+                case ICmpInst::ICMP_NE:
+                    res = (a.value != b.value);
+                    break;
+                case ICmpInst::ICMP_SGT:
+                    res = (a.value > b.value);
+                    break;
+                case ICmpInst::ICMP_SGE:
+                    res = (a.value >= b.value);
+                    break;
+                case ICmpInst::ICMP_SLT:
+                    res = (a.value < b.value);
+                    break;
+                case ICmpInst::ICMP_SLE:
+                    res = (a.value <= b.value);
+                    break;
+                default:
+                    assert(false && "ICmp-SingleValue illegal predicate");
+                }
+                state[inst_name] = 
+                    BasicLattice(BasicLattice::Type::SingleValue, res);
+                return state;
+            }
+            if (2 == rank) {
+                int res;
+                switch (cmp.getPredicate()) {
+                case ICmpInst::ICMP_EQ:
+                    break;
+                case ICmpInst::ICMP_NE:
+                    if (at != bt) {
+                        state[inst_name] = 
+                            BasicLattice(BasicLattice::Type::SingleValue, 1);
+                        return state; 
+                    }
+                    break;
+                case ICmpInst::ICMP_SGT:
+                    res = BasicLattice::isGreaterThan(at, bt);
+                    if (-1 == res) 
+                        break;
+                    state[inst_name] =
+                            BasicLattice(BasicLattice::Type::SingleValue, res);
+                    return state;
+                case ICmpInst::ICMP_SGE:
+                    res = BasicLattice::isGreaterThan(at, bt);
+                    if (at == BasicLattice::Type::Zero
+                        && bt == BasicLattice::Type::Zero)
+                        res = 1;
+                    if (-1 == res) 
+                        break;
+                    state[inst_name] =
+                            BasicLattice(BasicLattice::Type::SingleValue, res);
+                    return state;
+                case ICmpInst::ICMP_SLT:
+                    res = ! BasicLattice::isGreaterThan(at, bt);
+                    if (at == BasicLattice::Type::Zero
+                        && bt == BasicLattice::Type::Zero)
+                        res = 0;
+                    if (-1 == res) 
+                        break;
+                    state[inst_name] =
+                            BasicLattice(BasicLattice::Type::SingleValue, res);
+                    return state;
+                case ICmpInst::ICMP_SLE:
+                    res = ! BasicLattice::isGreaterThan(at, bt);
+                    if (-1 == res) 
+                        break;
+                    state[inst_name] =
+                            BasicLattice(BasicLattice::Type::SingleValue, res);
+                    return state;
+                default:
+                    assert(false && "ICmp-SingleValue illegal predicate");
+                }
+            }
+            state[inst_name] = BasicLattice(BasicLattice::Type::Any);
+            return state;
+        }
         case Instruction::Add: 
             // SingleValue -> add values
             if (at == BasicLattice::Type::SingleValue
