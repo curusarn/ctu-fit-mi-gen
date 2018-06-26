@@ -3,6 +3,8 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/raw_ostream.h"
 #include <iostream>
@@ -180,23 +182,32 @@ BasicLattice BasicLattice::getParent() const {
 
 BasicLattice BasicLattice::getLeastUpperBound(const BasicLattice & A,
                                               const BasicLattice & B) {
+    if (A.type == Type::Bottom)
+        return B;
+    if (B.type == Type::Bottom)
+        return A;
+
     if (A == B)
         return A;
     if (A.getRank() < B.getRank())
-       return getLeastUpperBound(A, B.getParent()); 
-    if (B.getRank() < A.getRank())
        return getLeastUpperBound(A.getParent(), B); 
+    if (B.getRank() < A.getRank())
+       return getLeastUpperBound(A, B.getParent()); 
     return getLeastUpperBound(A.getParent(), B.getParent()); 
 }
 
 std::pair<BasicLattice, BasicLattice> BasicLattice::toSameRank(
                 const std::pair<const BasicLattice, const BasicLattice> & ab) {
-    const auto & A = ab.first;
-    const auto & B = ab.second;
+    return toSameRank(ab.first, ab.second);
+}
+
+std::pair<BasicLattice, BasicLattice> BasicLattice::toSameRank(
+                                              const BasicLattice & A,
+                                              const BasicLattice & B) {
     if (A.getRank() < B.getRank())
-       return toSameRank(A, B.getParent()); 
-    if (B.getRank() < A.getRank())
        return toSameRank(A.getParent(), B); 
+    if (B.getRank() < A.getRank())
+       return toSameRank(A, B.getParent()); 
     assert(A.getRank() == B.getRank());
     return {A, B};
 }
@@ -229,6 +240,10 @@ BasicLattice ConstantPropagation::llvmValue2BasicLattice(
         return BasicLattice(BasicLattice::Type::SingleValue,
                             constant->getSExtValue());
     assert(!isa<Constant>(val));
+    if (!state.count(val->getName())) {
+        errs() << "[value2lattice produced Any]\n";
+        return BasicLattice(BasicLattice::Type::Any);
+    }
     return state.at(val->getName()); 
 }
 
@@ -260,25 +275,59 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
         return state;
 
     auto inst_name = inst->getName();
-    auto operand_count = inst->getNumOperands();
+    auto num_operands = inst->getNumOperands();
     std::vector<const Value *> ops;
-    assert(operand_count <= 2);
-    for (unsigned i = 0; i < operand_count; ++i)
+    assert(num_operands <= 3);
+    for (unsigned i = 0; i < num_operands; ++i)
         ops.push_back(inst->getOperand(i));
 
     switch (inst->getOpcode()) {
-    case Instruction::Load: 
-        state[inst_name] = state.at(ops[0]->getName());
-        return state;
+    // SPECIAL INSTRUCTIONS
     case Instruction::Store: 
         state[ops[1]->getName()] = llvmValue2BasicLattice(ops[0], state);
         return state;
+    case Instruction::PHI: {
+        const auto & phi = cast<PHINode>(*inst);
+        auto num_incoming = phi.getNumIncomingValues();
+        auto lat = BasicLattice();
+        for (unsigned i = 0; i < num_incoming; ++i) {
+            BasicLattice tmp_lat = llvmValue2BasicLattice(
+                                                    phi.getIncomingValue(i),
+                                                    state);
+            lat = BasicLattice::getLeastUpperBound(lat, tmp_lat);
+        }
+        state[inst_name] = lat;
+        return state;
+    }
+
+
+    // RETURN VALUE OF FIRST OPERAND 
+    case Instruction::Load: 
+    case Instruction::SExt:
+        if (state.count(ops[0]->getName()))
+            state[inst_name] = state.at(ops[0]->getName());
+        else
+            state[inst_name] = BasicLattice(BasicLattice::Type::Any);
+        return state;
+
+    // RETURN BasicLattice::Type::Any
+    case Instruction::ICmp:
+        // XXX: return Any for now (falltrough)
+    case Instruction::Call: 
+        if ("" != inst_name)
+            state[inst_name] = BasicLattice(BasicLattice::Type::Any);
+        return state;
+
+    // DO NOTHING
     case Instruction::Ret: 
+    case Instruction::Br: 
         // do nothing?
         return state;
+
+    // 2 OPERAND INSTRUCTIONS
     default:
         // all other instructions have two operands
-        assert(operand_count == 2 && inst->getOpcodeName());
+        assert(num_operands == 2 && inst->getOpcodeName());
         auto x = llvmValue2BasicLattice({ops[0], ops[1]}, state);
         x = BasicLattice::toSameRank(x);
         auto a = x.first;
@@ -298,6 +347,7 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                 return state; 
             }
             // Positive + (Positive || Zero) -> Positive
+            // Zero + Positive -> Positive
             if ((at == BasicLattice::Type::Positive
                  &&
                  (bt == BasicLattice::Type::Positive
@@ -305,11 +355,9 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                   bt == BasicLattice::Type::Zero)
                 )
                 ||
-                (bt == BasicLattice::Type::Positive
+                (at == BasicLattice::Type::Zero
                  &&
-                 (at == BasicLattice::Type::Positive 
-                  ||
-                  at == BasicLattice::Type::Zero)
+                 bt == BasicLattice::Type::Positive 
                 )
                ) {
                 state[inst_name] = BasicLattice(BasicLattice::Type::Positive);
@@ -323,11 +371,9 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                   bt == BasicLattice::Type::Zero)
                 )
                 ||
-                (bt == BasicLattice::Type::Negative
+                (at == BasicLattice::Type::Zero
                  &&
-                 (at == BasicLattice::Type::Negative 
-                  ||
-                  at == BasicLattice::Type::Zero)
+                 bt == BasicLattice::Type::Negative 
                 )
                ) {
                 state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
@@ -336,7 +382,8 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
             // Zero + Zero -> SingleValue of 0 !!!
             if (at == BasicLattice::Type::Zero &&
                 bt == BasicLattice::Type::Zero) {
-                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue, 0);
+                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
+                                                0);
                 return state; 
             }
             // Positive + Negative -> Any
@@ -357,9 +404,199 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                 return state; 
             }
             assert(false && "opAdd illegal combination");
+        case Instruction::Sub: 
+            // SingleValue -> sub values
+            if (at == BasicLattice::Type::SingleValue
+                &&
+                bt == BasicLattice::Type::SingleValue) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
+                                                a.value - b.value);
+                return state; 
+            }
+            // Positive - (Negative || Zero) -> Positive
+            // Zero - Negative -> Positive
+            if ((at == BasicLattice::Type::Positive
+                 &&
+                 (bt == BasicLattice::Type::Negative
+                  ||
+                  bt == BasicLattice::Type::Zero)
+                )
+                ||
+                (at == BasicLattice::Type::Zero
+                 &&
+                 bt == BasicLattice::Type::Negative
+                )
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Positive);
+                return state; 
+            }
+            // Negative - (Positive || Zero) -> Negative
+            // Zero - Positive -> Negative
+            if ((at == BasicLattice::Type::Negative
+                 &&
+                 (bt == BasicLattice::Type::Positive
+                  ||
+                  bt == BasicLattice::Type::Zero)
+                )
+                ||
+                (at == BasicLattice::Type::Zero
+                 &&
+                 bt == BasicLattice::Type::Positive
+                )
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
+                return state; 
+            }
+            // Zero + Zero -> SingleValue of 0 !!!
+            if (at == BasicLattice::Type::Zero &&
+                bt == BasicLattice::Type::Zero) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
+                                                0);
+                return state; 
+            }
+            // Any -> Any
+            if ((at == BasicLattice::Type::Positive
+                 &&
+                 bt == BasicLattice::Type::Positive)
+                ||
+                (bt == BasicLattice::Type::Negative
+                 &&
+                 at == BasicLattice::Type::Negative)
+                ||
+                (at == BasicLattice::Type::Any
+                 &&
+                 bt == BasicLattice::Type::Any)
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Any);
+                return state; 
+            }
+            assert(false && "opSub illegal combination");
+        case Instruction::Mul: 
+            // SingleValue -> mul values
+            if (at == BasicLattice::Type::SingleValue
+                &&
+                bt == BasicLattice::Type::SingleValue) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
+                                                a.value * b.value);
+                return state; 
+            }
+            // Positive * Positive -> Positive
+            // Negative * Negative -> Positive
+            if ((at == BasicLattice::Type::Positive
+                 &&
+                 bt == BasicLattice::Type::Positive
+                )
+                ||
+                (at == BasicLattice::Type::Negative
+                 &&
+                 bt == BasicLattice::Type::Negative
+                )
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Positive);
+                return state; 
+            }
+            // Positive * Negative -> Negative
+            // Negative * Positive -> Negative
+            if ((at == BasicLattice::Type::Positive
+                 &&
+                 bt == BasicLattice::Type::Negative
+                )
+                ||
+                (at == BasicLattice::Type::Negative
+                 &&
+                 bt == BasicLattice::Type::Positive
+                )
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
+                return state; 
+            }
+            // Zero * Zero -> SingleValue of 0 !!!
+            if (at == BasicLattice::Type::Zero || 
+                bt == BasicLattice::Type::Zero) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
+                                                0);
+                return state; 
+            }
+            // Any -> Any
+            if (at == BasicLattice::Type::Any
+                &&
+                bt == BasicLattice::Type::Any
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Any);
+                return state; 
+            }
+            assert(false && "opMul illegal combination");
+        case Instruction::SDiv: 
+            // SingleValue -> div values
+            if (at == BasicLattice::Type::SingleValue
+                &&
+                bt == BasicLattice::Type::SingleValue) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
+                                                a.value / b.value);
+                return state; 
+            }
+            // Positive / Positive -> Positive
+            // Negative / Negative -> Positive
+            if ((at == BasicLattice::Type::Positive
+                 &&
+                 bt == BasicLattice::Type::Positive
+                )
+                ||
+                (at == BasicLattice::Type::Negative
+                 &&
+                 bt == BasicLattice::Type::Negative
+                )
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Positive);
+                return state; 
+            }
+            // Positive / Negative -> Negative
+            // Negative / Positive -> Negative
+            if ((at == BasicLattice::Type::Positive
+                 &&
+                 bt == BasicLattice::Type::Negative
+                )
+                ||
+                (at == BasicLattice::Type::Negative
+                 &&
+                 bt == BasicLattice::Type::Positive
+                )
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
+                return state; 
+            }
+            // Zero / X -> SingleValue of 0 !!!
+            // this could work better
+            if (at == BasicLattice::Type::Zero) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
+                                                0);
+                return state; 
+            }
+            // X / Zero -> assert
+            if (bt == BasicLattice::Type::Zero) {
+                assert(false && "can't divide by zero");
+            }
+            // Any -> Any
+            if (at == BasicLattice::Type::Any
+                &&
+                bt == BasicLattice::Type::Any
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Any);
+                return state; 
+            }
+            assert(false && "opDiv illegal combination");
         default:
             errs() << "Unknown opcode: ";
             errs().write_escaped(inst->getOpcodeName()) << '\n';
+            errs() << "Unknown opcode: ";
+            errs().write_escaped(inst->getOpcodeName()) << '\n';
+            errs() << "Unknown opcode: ";
+            errs().write_escaped(inst->getOpcodeName()) << '\n';
+            errs() << "Unknown opcode: ";
+            errs().write_escaped(inst->getOpcodeName()) << '\n';
+            errs() << "Unknown opcode: ";
+            errs().write_escaped(inst->getOpcodeName()) << '\n';
+            assert(false);
             return state;
         } // end nested switch
     } // end top level switch
