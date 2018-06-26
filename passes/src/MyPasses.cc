@@ -221,11 +221,9 @@ bool ConstantPropagation::postprocess(Function &F) {
     {
         Instruction *inst = &*It;
         switch (inst->getOpcode()) {
+        case Instruction::Load:
         case Instruction::Store:
         case Instruction::PHI: 
-        case Instruction::Load:
-        case Instruction::Br:
-        case Instruction::SExt:
             break; // SKIP
 
         case Instruction::ICmp:
@@ -262,6 +260,33 @@ bool ConstantPropagation::postprocess(Function &F) {
                     modified = true;
                 }
             }
+            break;
+        }
+        case Instruction::Br:
+        case Instruction::SExt: {
+            auto inst_name = inst->getName();
+            errs() << "> INST: ";
+            errs().write_escaped(inst_name) << '\n';
+
+            auto inst_state = inst_state_in_.at(inst);
+            dumpState(inst_state);
+            const Value * op = inst->getOperand(0);
+            auto op_name = op->getName();
+            errs() << "> > op: ";
+            errs().write_escaped(op_name) << '\n';
+            if ("" != op_name &&
+                inst_state.count(op_name) &&
+                BasicLattice::Type::SingleValue == inst_state.at(op_name).type) {
+                
+                auto & context = inst->getContext();
+                auto val = inst_state.at(op_name).value;
+                Value * c = ConstantInt::get(context, llvm::APInt(1, val));
+                inst->setOperand(0, c);
+                // I'm probably leaking memory
+                errs() << "> > > replaced with: " << val << "\n";
+                modified = true;
+            }
+            break;
         }
         } // end switch
     }
