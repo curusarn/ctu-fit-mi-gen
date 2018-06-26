@@ -6,416 +6,368 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/raw_ostream.h"
 #include <iostream>
+#include "AbstractInterpretation.h"
 
 using namespace llvm;
 
-namespace {
-    struct Hello : public FunctionPass {
-        static char ID;
-        Hello() : FunctionPass(ID) {}
+namespace my_passes {
 
-        bool runOnFunction(Function &F) override {
-            errs() << "Hello: ";
-            errs().write_escaped(F.getName()) << '\n';
-            return false;
-        }
-    }; // end of struct Hello
+struct Hello : public FunctionPass {
+    static char ID;
+    Hello() : FunctionPass(ID) {}
 
-    template <class T> struct AbstractInterpretation : public FunctionPass {
-        using state_type = std::map<std::string, T>;
-        std::map<std::string, std::map<std::string, T>> bb_state_;
+    bool runOnFunction(Function &F) override {
+        errs() << "Hello: ";
+        errs().write_escaped(F.getName()) << '\n';
+        return false;
+    }
+}; // end of struct Hello
 
-        explicit AbstractInterpretation(char ID) : FunctionPass(ID) {} 
+struct DummyLattice {
+    int value;
+    static DummyLattice getTop() { return DummyLattice(1); }
+    static DummyLattice getBottom() { return DummyLattice(0); }
+    static DummyLattice getLeastUpperBound(const DummyLattice & A,
+                                           const DummyLattice & B) {
+        int v = std::max(A.value, B.value);
+        return (v == A.value) ? DummyLattice(A) : DummyLattice(B);
+    }
+    DummyLattice() : DummyLattice(getBottom()) {}
+    DummyLattice(const DummyLattice & dl) = default;
+    DummyLattice & operator= (const DummyLattice & dl) 
+    { value = dl.value; return *this; }
+    explicit DummyLattice(int x) : value(x) {};
+    bool operator== (const DummyLattice & B) const { return value == B.value; };
+};
 
-        static void dumpState(const state_type & state) {
-            for (auto& x : state)
-                std::cout << x.first << ": "
-                << static_cast<int>(x.second.type) << " ("
-                << x.second.value << ")\n";
-        }
+struct DummyAI : public AbstractInterpretation<DummyLattice> {
+    static char ID;
 
-        virtual state_type flowState(const Instruction * inst,
-                                     state_type cur_state) = 0;
+    DummyAI() : AbstractInterpretation(ID) {}
 
-        bool doInitialization(Function &) {
-            bb_state_.clear();
-            return false;
-        }
+    AbstractInterpretation::state_type flowState(const Instruction *,
+                    AbstractInterpretation::state_type state) override {
+        state["dummy"] = DummyLattice(1);
+        return state;
+    }
 
-        bool doFinalization(Function &) {
-            bb_state_.clear();
-            return false;
-        }
+    bool doInitialization(Function &F) {
+        bool ret = AbstractInterpretation::doInitialization(F);
+        // do stuff
+        return ret;
+    }
 
-        state_type mergeStates(const state_type & A, const state_type & B) {
-            state_type state;
-            for (const auto & it : A)
-                if (!B.count(it.first))
-                    state[it.first] = it.second; 
-                else
-                    state[it.first] =
-                        T::getLeastUpperBound(it.second, B.at(it.first));
+    bool doFinalization(Function &F) {
+        // do stuff
+        return AbstractInterpretation::doFinalization(F);
+    }
+}; // end of DummyAI
 
-            for (const auto & it : B)
-                if (!A.count(it.first))
-                    state[it.first] = it.second; 
+struct CheckNames : public FunctionPass {
+    static char ID;
+    CheckNames() : FunctionPass(ID) {}
 
-            return state; 
-        }
+    bool runOnFunction(Function &F) override {
+        errs() << "CheckNames: ";
+        errs().write_escaped(F.getName()) << '\n';
+        Function::BasicBlockListType & bb_list = F.getBasicBlockList();
 
-        bool statesEqual(const state_type & A, const state_type & B) {
-            return A == B;
-        }
+        for (llvm::BasicBlock & bb : bb_list) {
+            errs().write_escaped(bb.getName()) << '\n';
 
-        state_type mergePredecessorStates(const BasicBlock & bb) {
-            state_type state;
-            for (const BasicBlock * pred : predecessors(&bb)) {
-                state = mergeStates(state, bb_state_[pred->getName()]);
+            for (llvm::Instruction & inst : bb) {
+                errs() << "    ";
+                errs().write_escaped(inst.getName()) << '\n';
             }
-            return state;
         }
-
-        bool runOnFunction(Function &F) override {
-            errs() << ">>> AI FUNC: ";
-            errs().write_escaped(F.getName()) << '\n';
-
-            bool modified=false;  
-            // Set initial states
-            Function::BasicBlockListType & bb_list = F.getBasicBlockList();
-            for (BasicBlock & bb : bb_list) {
-                bb_state_[bb.getName()] = state_type();
-                //set bb.inState = bottom for every variable
-                //set bb.outState = bottom for every variable
-            }
-            BasicBlock & ebb = F.getEntryBlock();
-            //set ebb.inState = (user-defined initial state)
-
-            // Iterate until fixed point TODO
-            bool changed = true;
-            while (changed) {
-                changed = false;
-                // Process all basic blocks, looking for changes
-                for (BasicBlock & bb : bb_list) {
-                    errs() << ">> AI BLOCK: ";
-                    errs().write_escaped(bb.getName()) << '\n';
-                    // Set up in state
-                    state_type bb_instate = (&bb != &ebb) ? mergePredecessorStates(bb) : state_type();
-                    state_type cur_state = bb_instate;
-
-                    // Interpret block
-                    for (Instruction &I : bb) {
-                        Instruction * inst = &I;
-
-                        cur_state = this->flowState(inst, cur_state);
-                    }
-                    // Set out state and check for changes
-                    if (!statesEqual(cur_state, bb_state_.at(bb.getName())))
-                        changed = true;
-                    bb_state_[bb.getName()] = cur_state;
-                }
-            }
-
-            return modified;
-
-            //bool modified=false;  
-
-            for (inst_iterator It = inst_begin(F), E = inst_end(F); It != E; ++It)
-            {
-                Instruction *inst = &*It;
-                // if something then modify or delete instruction
-            }
-
-            return modified;
-        }
+        return false;
+    }
+}; // end of struct CheckNames
 
 
-    }; // end of struct AbstractInterpretation
-
-    struct DummyLattice {
-        int value;
-        static DummyLattice getTop() { return DummyLattice(1); }
-        static DummyLattice getBottom() { return DummyLattice(0); }
-        static DummyLattice getLeastUpperBound(const DummyLattice & A,
-                const DummyLattice & B) {
-            int v = std::max(A.value, B.value);
-            return (v == A.value) ? DummyLattice(A) : DummyLattice(B);
-        }
-        DummyLattice() : DummyLattice(getBottom()) {}
-        DummyLattice(const DummyLattice & dl) = default;
-        DummyLattice & operator= (const DummyLattice & dl) 
-        { value = dl.value; return *this; }
-        explicit DummyLattice(int x) : value(x) {};
-        bool operator== (const DummyLattice & B) const { return value == B.value; };
+struct BasicLattice {
+    enum class Type {
+        Top = 40,
+        Any = 30,
+        Positive = 20, Zero = 21, Negative = 22,
+        SingleValue = 10,
+        Bottom = 0
     };
+    int getRank() const { return static_cast<int>(type) / 10; }
 
-    struct DummyAI : public AbstractInterpretation<DummyLattice> {
-        static char ID;
+    int64_t value;
+    Type type;
 
-        DummyAI() : AbstractInterpretation(ID) {}
+    BasicLattice() : BasicLattice(getBottom()) {}
+    BasicLattice(const BasicLattice & x) = default;
+    explicit BasicLattice(Type t, int v = 0) : value(v), type(t) {};
 
-        AbstractInterpretation::state_type flowState(const Instruction *,
-                        AbstractInterpretation::state_type state) override {
-            state["dummy"] = DummyLattice(1);
-            return state;
-        }
+    static BasicLattice getTop() { return BasicLattice(Type::Top); }
+    static BasicLattice getBottom() { return BasicLattice(Type::Bottom); }
 
-        bool doInitialization(Function &F) {
-            bool ret = AbstractInterpretation::doInitialization(F);
-            // do stuff
-            return ret;
-        }
+    bool operator== (const BasicLattice & B) const;
 
-        bool doFinalization(Function &F) {
-            // do stuff
-            return AbstractInterpretation::doFinalization(F);
-        }
-    }; // end of DummyAI
+    BasicLattice getParent() const;
+    static BasicLattice getLeastUpperBound(const BasicLattice & A,
+                                           const BasicLattice & B); 
+    static std::pair<BasicLattice, BasicLattice> toSameRank(
+                const std::pair<const BasicLattice, const BasicLattice> & ab);
+    static std::pair<BasicLattice, BasicLattice> toSameRank(
+                                           const BasicLattice & A,
+                                           const BasicLattice & B);
+};
 
-    struct BasicLattice {
-        enum class Type {
-            Top = 40,
-            Any = 30,
-            Positive = 20, Zero = 21, Negative = 22,
-            SingleValue = 10,
-            Bottom = 0
-        };
-        int getRank() const { return static_cast<int>(type) / 10; }
+struct ConstantPropagation : public AbstractInterpretation<BasicLattice> {
+    static char ID;
+    std::map<const Instruction *, state_type> inst_state_in_;
 
-        int64_t value;
-        Type type;
+    ConstantPropagation() : AbstractInterpretation(ID) {}
 
-        BasicLattice() : BasicLattice(getBottom()) {}
-        BasicLattice(const BasicLattice & x) = default;
-        explicit BasicLattice(Type t, int v = 0)
-            : value(v), type(t) {};
+    bool doInitialization(Function &F);
+    bool doFinalization(Function &F);
+    ConstantPropagation::state_type getEntryBlockState(
+                                            const BasicBlock & bb) override;
+    ConstantPropagation::state_type flowState(
+                            const Instruction * inst,
+                            ConstantPropagation::state_type state) override;
+    private:
+    std::pair<BasicLattice, BasicLattice> llvmValue2BasicLattice(
+                                std::pair<const Value *, const Value *> vals,
+                                const state_type & state) const;
+    BasicLattice llvmValue2BasicLattice(const Value * val,
+                                        const state_type & state) const;
+};
 
-        static BasicLattice getTop()
-        { return BasicLattice(Type::Top); }
-        static BasicLattice getBottom()
-        { return BasicLattice(Type::Bottom); }
+// BasicLattice 
 
-        bool operator== (const BasicLattice & B) const {
-            if (type == B.type)
-                if (Type::SingleValue == type)
-                    return value == B.value;
-                return true;
+bool BasicLattice::operator== (const BasicLattice & B) const {
+    if (type == B.type) {
+        if (Type::SingleValue == type)
+            return value == B.value;
+        return true;
+    }
 
-            return false;
-        };
+    return false;
+}
 
-        BasicLattice getParent() const {
-            switch (type) {
-                case Type::Bottom:
-                    assert(false && "Bottom of the lattice technically has"
-                                    " a parent but why would you do this.");
+BasicLattice BasicLattice::getParent() const {
+    switch (type) {
+        case Type::Bottom:
+            assert(false && "Bottom of the lattice technically has"
+                            " a parent but why would you do this.");
 
-                case Type::SingleValue:
-                    if (value > 0)
-                        return BasicLattice(Type::Positive);
-                    if (value < 0)
-                        return BasicLattice(Type::Negative);
-                    return BasicLattice(Type::Zero);
+        case Type::SingleValue:
+            if (value > 0)
+                return BasicLattice(Type::Positive);
+            if (value < 0)
+                return BasicLattice(Type::Negative);
+            return BasicLattice(Type::Zero);
 
-                case Type::Positive:
-                case Type::Negative:
-                case Type::Zero:
-                    return BasicLattice(Type::Any);
+        case Type::Positive:
+        case Type::Negative:
+        case Type::Zero:
+            return BasicLattice(Type::Any);
 
-                case Type::Any:
-                    return BasicLattice(Type::Top);
+        case Type::Any:
+            return BasicLattice(Type::Top);
 
-                case Type::Top:
-                    assert(false && "Top of the lattice has no parent!");
-                default:
-                    assert(false && "Unexpected lattice type at getParent()");
+        case Type::Top:
+            assert(false && "Top of the lattice has no parent!");
+        default:
+            assert(false && "Unexpected lattice type at getParent()");
+    }
+}
+
+BasicLattice BasicLattice::getLeastUpperBound(const BasicLattice & A,
+                                              const BasicLattice & B) {
+    if (A == B)
+        return A;
+    if (A.getRank() < B.getRank())
+       return getLeastUpperBound(A, B.getParent()); 
+    if (B.getRank() < A.getRank())
+       return getLeastUpperBound(A.getParent(), B); 
+    return getLeastUpperBound(A.getParent(), B.getParent()); 
+}
+
+std::pair<BasicLattice, BasicLattice> BasicLattice::toSameRank(
+                const std::pair<const BasicLattice, const BasicLattice> & ab) {
+    const auto & A = ab.first;
+    const auto & B = ab.second;
+    if (A.getRank() < B.getRank())
+       return toSameRank(A, B.getParent()); 
+    if (B.getRank() < A.getRank())
+       return toSameRank(A.getParent(), B); 
+    assert(A.getRank() == B.getRank());
+    return {A, B};
+}
+
+// ConstantPropagation
+
+bool ConstantPropagation::doInitialization(Function &F) {
+    bool ret = AbstractInterpretation::doInitialization(F);
+    // do stuff
+    return ret;
+}
+
+bool ConstantPropagation::doFinalization(Function &F) {
+    // do stuff !?!
+    return AbstractInterpretation::doFinalization(F);
+}
+
+std::pair<BasicLattice, BasicLattice>
+                        ConstantPropagation::llvmValue2BasicLattice(
+                                std::pair<const Value *, const Value *> vals,
+                                const state_type & state) const {
+    return {llvmValue2BasicLattice(vals.first, state),
+            llvmValue2BasicLattice(vals.second, state)};
+}
+
+BasicLattice ConstantPropagation::llvmValue2BasicLattice(
+                                    const Value * val,
+                                    const state_type & state) const {
+    if (auto constant = dyn_cast<ConstantInt>(val))
+        return BasicLattice(BasicLattice::Type::SingleValue,
+                            constant->getSExtValue());
+    assert(!isa<Constant>(val));
+    return state.at(val->getName()); 
+}
+
+ConstantPropagation::state_type ConstantPropagation::getEntryBlockState(
+                                    const BasicBlock & bb) {
+    auto state = state_type();
+    const Function * f = bb.getParent();
+    // set all incoming arg to BasicLattice::Type::Any
+    for (auto it = f->arg_begin(); it != f->arg_end(); ++it) 
+        state[it->getName()] = BasicLattice(BasicLattice::Type::Any);
+    return state_type();
+}
+
+ConstantPropagation::state_type ConstantPropagation::flowState(
+                                    const Instruction * inst,
+                                    ConstantPropagation::state_type state) {
+    // save in states for every instruction for future processing
+    inst_state_in_[inst] = state;
+    
+    dumpState(state);
+    errs() << "> INST: ";
+    errs().write_escaped(inst->getOpcodeName()) << '\n';
+    errs() << "> INST: ";
+    errs().write_escaped(inst->getOpcodeName()) << '\n';
+    errs() << "> INST: ";
+    errs().write_escaped(inst->getOpcodeName()) << '\n';
+
+    if (!isa<Value>(inst))
+        return state;
+
+    auto inst_name = inst->getName();
+    auto operand_count = inst->getNumOperands();
+    std::vector<const Value *> ops;
+    assert(operand_count <= 2);
+    for (unsigned i = 0; i < operand_count; ++i)
+        ops.push_back(inst->getOperand(i));
+
+    switch (inst->getOpcode()) {
+    case Instruction::Load: 
+        state[inst_name] = state.at(ops[0]->getName());
+        return state;
+    case Instruction::Store: 
+        state[ops[1]->getName()] = llvmValue2BasicLattice(ops[0], state);
+        return state;
+    case Instruction::Ret: 
+        // do nothing?
+        return state;
+    default:
+        // all other instructions have two operands
+        assert(operand_count == 2 && inst->getOpcodeName());
+        auto x = llvmValue2BasicLattice({ops[0], ops[1]}, state);
+        x = BasicLattice::toSameRank(x);
+        auto a = x.first;
+        auto b = x.second;
+        auto at = a.type;
+        auto bt = b.type;
+    
+        // NESTED SWITCH for rest of the instructions
+        switch (inst->getOpcode()) {
+        case Instruction::Add: 
+            // SingleValue -> add values
+            if (at == BasicLattice::Type::SingleValue
+                &&
+                bt == BasicLattice::Type::SingleValue) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
+                                                a.value + b.value);
+                return state; 
             }
-        }
-        static BasicLattice getLeastUpperBound(const BasicLattice & A,
-                                               const BasicLattice & B) {
-            if (A == B)
-                return A;
-            if (A.getRank() < B.getRank())
-               return getLeastUpperBound(A, B.getParent()); 
-            if (B.getRank() < A.getRank())
-               return getLeastUpperBound(A.getParent(), B); 
-            return getLeastUpperBound(A.getParent(), B.getParent()); 
-        }
-        static std::pair<BasicLattice, BasicLattice> toSameRank(
-                                            const BasicLattice & A,
-                                            const BasicLattice & B) {
-            if (A.getRank() < B.getRank())
-               return toSameRank(A, B.getParent()); 
-            if (B.getRank() < A.getRank())
-               return toSameRank(A.getParent(), B); 
-            assert(A.getRank() == B.getRank());
-            return {A, B};
-        }
-
-    };
-
-    struct ConstantPropagation : public AbstractInterpretation<BasicLattice> {
-        static char ID;
-
-        ConstantPropagation() : AbstractInterpretation(ID) {}
-
-        AbstractInterpretation::state_type flowState(const Instruction * inst,
-                         AbstractInterpretation::state_type state) override {
-
-            dumpState(state);
-            errs() << "> INST: ";
+            // Positive + (Positive || Zero) -> Positive
+            if ((at == BasicLattice::Type::Positive
+                 &&
+                 (bt == BasicLattice::Type::Positive
+                  ||
+                  bt == BasicLattice::Type::Zero)
+                )
+                ||
+                (bt == BasicLattice::Type::Positive
+                 &&
+                 (at == BasicLattice::Type::Positive 
+                  ||
+                  at == BasicLattice::Type::Zero)
+                )
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Positive);
+                return state; 
+            }
+            // Negative -||-
+            if ((at == BasicLattice::Type::Negative
+                 &&
+                 (bt == BasicLattice::Type::Negative
+                  ||
+                  bt == BasicLattice::Type::Zero)
+                )
+                ||
+                (bt == BasicLattice::Type::Negative
+                 &&
+                 (at == BasicLattice::Type::Negative 
+                  ||
+                  at == BasicLattice::Type::Zero)
+                )
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
+                return state; 
+            }
+            // Zero + Zero -> SingleValue of 0 !!!
+            if (at == BasicLattice::Type::Zero &&
+                bt == BasicLattice::Type::Zero) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue, 0);
+                return state; 
+            }
+            // Positive + Negative -> Any
+            // Any -> Any
+            if ((at == BasicLattice::Type::Positive
+                 &&
+                 bt == BasicLattice::Type::Negative)
+                ||
+                (bt == BasicLattice::Type::Positive
+                 &&
+                 at == BasicLattice::Type::Negative)
+                ||
+                (at == BasicLattice::Type::Any
+                 &&
+                 bt == BasicLattice::Type::Any)
+               ) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Any);
+                return state; 
+            }
+            assert(false && "opAdd illegal combination");
+        default:
+            errs() << "Unknown opcode: ";
             errs().write_escaped(inst->getOpcodeName()) << '\n';
+            return state;
+        } // end nested switch
+    } // end top level switch
+}
 
-            if (!isa<Value>(inst))
-                return state;
+}  // end of my_passes namespace
 
-            auto inst_name = inst->getName();
-
-            switch (inst->getOpcode()) {
-                case Instruction::Add: 
-                {
-                    auto lhs = inst->getOperand(0);
-                    auto rhs = inst->getOperand(1);
-                    auto lhs_value = BasicLattice();
-                    auto rhs_value = BasicLattice();
-
-                    // promote constants to SingleValue BasicLatticeType
-                    // save variable names if any
-                    if (auto lhs_c = dyn_cast<ConstantInt>(lhs)) {
-                        lhs_value \
-                            = BasicLattice(BasicLattice::Type::SingleValue,
-                                           lhs_c->getSExtValue());
-                    } else {
-                        assert(!isa<Constant>(lhs));
-                        lhs_value = state.at(lhs->getName()); 
-                    }
-                    if (auto rhs_c = dyn_cast<ConstantInt>(rhs)) {
-                        rhs_value \
-                            = BasicLattice(BasicLattice::Type::SingleValue,
-                                           rhs_c->getSExtValue());
-                    } else {
-                        assert(!isa<Constant>(rhs) && "Add inst assert");
-                        rhs_value = state.at(rhs->getName());
-                    }
-
-                    // toSameRank()
-                    auto values = BasicLattice::toSameRank(lhs_value,
-                                                           rhs_value);
-                    lhs_value = values.first;
-                    rhs_value = values.second;
-
-                    // SingleValue -> add values
-                    if (lhs_value.type == BasicLattice::Type::SingleValue &&
-                        rhs_value.type == BasicLattice::Type::SingleValue) {
-                        state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
-                                                        lhs_value.value + rhs_value.value);
-                        return state; 
-                    }
-                    // Positive + (Positive || Zero) -> Positive
-                    if (lhs_value.type == BasicLattice::Type::Positive &&
-                        (rhs_value.type == BasicLattice::Type::Positive ||
-                         rhs_value.type == BasicLattice::Type::Zero)) {
-                        state[inst_name] = BasicLattice(BasicLattice::Type::Positive);
-                        return state; 
-                    }
-                    // Negative -||-
-                    if (lhs_value.type == BasicLattice::Type::Negative &&
-                        (rhs_value.type == BasicLattice::Type::Negative ||
-                         rhs_value.type == BasicLattice::Type::Zero)) {
-                        state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
-                        return state; 
-                    }
-                    // Zero + Zero -> SingleValue of 0 !!!
-                    if (lhs_value.type == BasicLattice::Type::Zero &&
-                        rhs_value.type == BasicLattice::Type::Zero) {
-                        state[inst_name] = BasicLattice(BasicLattice::Type::SingleValue,
-                                                        0);
-                        return state; 
-                    }
-                    // Positive + Negative -> Any
-                    // Any -> Any
-                    if ((lhs_value.type == BasicLattice::Type::Positive &&
-                        rhs_value.type == BasicLattice::Type::Negative) ||
-                        (lhs_value.type == BasicLattice::Type::Any &&
-                        rhs_value.type == BasicLattice::Type::Any)) {
-
-                        state[inst_name] = BasicLattice(BasicLattice::Type::Any);
-                        return state; 
-                    }
-                    assert(false && "opAdd illegal combination");
-                }
-                case Instruction::Store: 
-                {
-                    auto lhs = inst->getOperand(0);
-                    auto rhs = inst->getOperand(1);
-                    auto lhs_value = BasicLattice();
-
-                    // promote constants to SingleValue BasicLatticeType
-                    // save variable names if any
-                    if (auto lhs_c = dyn_cast<ConstantInt>(lhs)) {
-                        lhs_value \
-                            = BasicLattice(BasicLattice::Type::SingleValue,
-                                           lhs_c->getSExtValue());
-                    } else {
-                        assert(!isa<Constant>(lhs) && "Store inst assert");
-                        lhs_value = state.at(lhs->getName()); 
-                    }
-                    
-                    state[rhs->getName()] = lhs_value;
-                    return state;
-                }
-                case Instruction::Load: 
-                {
-                    auto lhs = inst->getOperand(0);
-                    auto lhs_value = BasicLattice();
-
-                    // promote constants to SingleValue BasicLatticeType
-                    // save variable names if any
-                    //assert(!isa<Constant>(lhs) && "Load inst assert");
-                    lhs_value = state.at(lhs->getName()); 
-                    
-                    state[inst_name] = lhs_value;
-                    return state;
-                }
-                default:
-                    errs() << "Unknown opcode: ";
-                    errs().write_escaped(inst->getOpcodeName()) << '\n';
-                    return state;
-            }
-        }
-
-        bool doInitialization(Function &F) {
-            bool ret = AbstractInterpretation::doInitialization(F);
-            // do stuff
-            return ret;
-        }
-
-        bool doFinalization(Function &F) {
-            // do stuff !!!
-            return AbstractInterpretation::doFinalization(F);
-        }
-    };
-
-    struct CheckNames : public FunctionPass {
-        static char ID;
-        CheckNames() : FunctionPass(ID) {}
-
-        bool runOnFunction(Function &F) override {
-            errs() << "CheckNames: ";
-            errs().write_escaped(F.getName()) << '\n';
-            Function::BasicBlockListType & bb_list = F.getBasicBlockList();
-
-            for (llvm::BasicBlock & bb : bb_list) {
-                errs().write_escaped(bb.getName()) << '\n';
-
-                for (llvm::Instruction & inst : bb) {
-                    errs() << "    ";
-                    errs().write_escaped(inst.getName()) << '\n';
-                }
-            }
-            return false;
-        }
-    }; // end of struct CheckNames
-}  // end of anonymous namespace
+using namespace my_passes;
 
 
 char Hello::ID = 0;
