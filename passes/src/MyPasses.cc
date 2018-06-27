@@ -76,7 +76,6 @@ struct CheckNames : public FunctionPass {
     }
 }; // end of struct CheckNames
 
-
 struct BasicLattice {
     enum class Type {
         Top = 40,
@@ -130,6 +129,45 @@ struct ConstantPropagation : public AbstractInterpretation<BasicLattice> {
                                         const state_type & state) const;
     void dumpState(const state_type & state);
 };
+
+struct DCELattice {
+    enum class Type {
+        Top = 30,
+        Used = 20,
+        Unused = 10,
+        Bottom = 0
+    };
+    int getRank() const { return static_cast<int>(type) / 10; }
+    Type type;
+
+    DCELattice() : DCELattice(getBottom()) {}
+    DCELattice(const DCELattice & x) = default;
+    explicit DCELattice(Type t) : type(t) {};
+
+    static DCELattice getTop() { return DCELattice(Type::Top); }
+    static DCELattice getBottom() { return DCELattice(Type::Bottom); }
+
+    bool operator== (const DCELattice & B) const { return type == B.type; }
+
+    DCELattice getParent() const;
+    static DCELattice getLeastUpperBound(const DCELattice & A,
+                                         const DCELattice & B); 
+};
+
+struct DeadCodeElimination : public AbstractInterpretation<DCELattice> {
+    static char ID;
+
+    DeadCodeElimination() : AbstractInterpretation(ID) {}
+
+    bool postprocess(Function &F);
+    DeadCodeElimination::state_type getEntryBlockState(
+                                    const BasicBlock & bb) override;
+    DeadCodeElimination::state_type flowState(
+                                const Instruction * inst,
+                                DeadCodeElimination::state_type state) override;
+    private:
+    void dumpState(const state_type & state);
+}; // end of struct DeadCodeElimination
 
 // BasicLattice 
 
@@ -488,11 +526,11 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                     return state;
                 case ICmpInst::ICMP_SLE:
                 case ICmpInst::ICMP_SLT:
-                    res = ! BasicLattice::isGreaterThan(at, bt);
+                    res = BasicLattice::isGreaterThan(at, bt);
                     if (-1 == res) 
                         break;
                     state[inst_name] =
-                            BasicLattice(BasicLattice::Type::SingleValue, res);
+                            BasicLattice(BasicLattice::Type::SingleValue, !res);
                     return state;
                 default:
                     assert(false && "ICmp-SingleValue illegal predicate");
@@ -743,7 +781,124 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
             return state;
         } // end nested switch
     } // end top level switch
+} 
+
+// DCELattice 
+
+DCELattice DCELattice::getParent() const {
+    switch (type) {
+        case Type::Bottom:
+            return DCELattice(Type::Unused);
+        case Type::Unused:
+            return DCELattice(Type::Used);
+        case Type::Used:
+            return DCELattice(Type::Top);
+        case Type::Top:
+            assert(false && "Top of the lattice has no parent!");
+        default:
+            assert(false && "Unexpected lattice type at getParent()");
+    }
 }
+
+DCELattice DCELattice::getLeastUpperBound(const DCELattice & A,
+                                          const DCELattice & B) {
+    if (A.getRank() < B.getRank())
+       return B;
+    return A;
+}
+
+// DeadCodeElimination
+
+void DeadCodeElimination::dumpState(const state_type & state) {
+    for (auto& x : state)
+        errs() << x.first << ": " << static_cast<int>(x.second.type) << "\n";
+}
+
+bool DeadCodeElimination::postprocess(Function &F) {
+    bool modified=false;  
+
+    errs() << "--- POSTPROCESS ---\n";
+    state_type state = state_type();
+
+    Function::BasicBlockListType & bb_list = F.getBasicBlockList();
+    for (llvm::BasicBlock & bb : bb_list) {
+        //errs().write_escaped(bb.getName()) << '\n';
+        state_type & tmp_state = bb_state_.at(bb.getName());
+        state = AbstractInterpretation::mergeStates(state, tmp_state);
+    }
+
+    dumpState(state);
+    inst_iterator it = inst_begin(F);
+    auto end = inst_end(F); 
+    while (it != end)
+    { 
+        Instruction *inst = &*it;
+        it++;
+        switch (inst->getOpcode()) {
+        case Instruction::Store:
+        case Instruction::PHI: 
+        case Instruction::Call:
+        case Instruction::Ret:
+            break; // SKIP - has side effects
+
+        default:
+        {
+            auto inst_name = inst->getName();
+            if ("" != inst_name && state.count(inst_name)
+                    && state.at(inst_name).type == DCELattice::Type::Unused) {
+                errs() << "> erasing INST: ";
+                errs().write_escaped(inst->getOpcodeName()) << '\n';
+                inst->eraseFromParent();
+                modified = true;
+                //it = inst_begin(F);
+                break;
+            }
+        }
+        } // end switch
+    }
+    return modified;
+}
+
+DeadCodeElimination::state_type DeadCodeElimination::getEntryBlockState(
+                                    const BasicBlock & bb) {
+    auto state = state_type();
+    const Function * f = bb.getParent();
+    // set all incoming arg to BasicLattice::Type::Any
+    for (auto it = f->arg_begin(); it != f->arg_end(); ++it) 
+        state[it->getName()] = DCELattice(DCELattice::Type::Unused);
+    return state_type();
+}
+
+DeadCodeElimination::state_type DeadCodeElimination::flowState(
+                                    const Instruction * inst,
+                                    DeadCodeElimination::state_type state) {
+    dumpState(state);
+    errs() << "> INST: ";
+    errs().write_escaped(inst->getOpcodeName()) << '\n';
+
+    // set inst to unused if not in state
+    auto inst_name = inst->getName();
+    if ("" != inst_name && !state.count(inst_name))
+        state[inst_name] = DCELattice(DCELattice::Type::Unused);
+         
+    assert("" == inst_name 
+           || state.at(inst_name).type != DCELattice::Type::Bottom);
+
+    auto num_operands = inst->getNumOperands();
+    std::vector<const Value *> ops;
+    assert(num_operands <= 3);
+    for (unsigned i = 0; i < num_operands; ++i) {
+        //ops.push_back(inst->getOperand(i));
+        auto * op = inst->getOperand(i);
+        std::string op_name = op->getName();
+        // set operand to used if has name and is not global
+        if ("" != op_name && '_' != op_name.back()) {
+            //assert(state.count(op_name));
+            state[op_name] = DCELattice(DCELattice::Type::Used);
+        }
+    }
+    return state;
+} 
 
 }  // end of my_passes namespace
 
@@ -752,21 +907,26 @@ using namespace my_passes;
 
 char Hello::ID = 0;
 static RegisterPass<Hello> X1("hello", "Hello World Pass",
-        false /* Only looks at CFG */,
-        false /* Analysis Pass */);
+                              false /* Only looks at CFG */,
+                              false /* Analysis Pass */);
 
 char CheckNames::ID = 1;
 static RegisterPass<CheckNames> X2("checknames", "CheckNames Pass",
-        false /* Only looks at CFG */,
-        false /* Analysis Pass */);
+                                false /* Only looks at CFG */,
+                                false /* Analysis Pass */);
 
 char DummyAI::ID = 2;
 static RegisterPass<DummyAI> X3("ai_dummy", "Dummy AbstractInterpretation Pass",
-        false /* Only looks at CFG */,
-        false /* Analysis Pass */);
+                                false /* Only looks at CFG */,
+                                false /* Analysis Pass */);
 
 char ConstantPropagation::ID = 3;
 static RegisterPass<ConstantPropagation> X4("ai_cp", "ConstantPropagation Pass",
-        false /* Only looks at CFG */,
-        false /* Analysis Pass */);
+                                            false /* Only looks at CFG */,
+                                            false /* Analysis Pass */);
 
+char DeadCodeElimination::ID = 3;
+static RegisterPass<DeadCodeElimination> X5("ai_dce",
+                                            "DeadCodeElimination Pass",
+                                            false /* Only looks at CFG */,
+                                            false /* Analysis Pass */);
