@@ -11,6 +11,9 @@ all: print-vars ${FILE}.final.bc
 showIR: all
 	vim -O ${FILE}.ll ${FILE}.mem2reg.ll ${FILE}.final.ll
 
+diffIR: all
+	diff -y -W 175 ${FILE}.mem2reg.ll ${FILE}.final.ll | less
+
 print-vars:
 	# ####################################################
 	# FILE = ${FILE} -> tests/${FILE}.mila

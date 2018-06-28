@@ -698,6 +698,13 @@ ConstantPropagation::state_type ConstantPropagation::flowState(
                 state[inst_name] = BasicLattice(BasicLattice::Type::Negative);
                 return state; 
             }
+            // Zero -> Zero
+            if (at == BasicLattice::Type::Zero
+                ||
+                bt == BasicLattice::Type::Zero) {
+                state[inst_name] = BasicLattice(BasicLattice::Type::Zero);
+                return state; 
+            }
             // Any -> Any
             if (at == BasicLattice::Type::Any
                 &&
